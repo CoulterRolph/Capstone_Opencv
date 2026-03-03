@@ -1,0 +1,17 @@
+# Ignore the entire pingpong folder at the repo root
+/pingpong/
+# Ignore the entire train_ball_player folder at the repo root
+/train_ball_player/test/
+/train_ball_player/train/
+/train_ball_player/valid/
+#ignore the 
+/train_table/test/
+/train_table/train/
+/train_table/valid/
+# Ignore image files anywhere
+*.jpg
+*.jpeg
+*.png
+*.txt
+# Ignore csv files anywhere
+*.csv
