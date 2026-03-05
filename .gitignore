@@ -13,5 +13,7 @@
 *.jpeg
 *.png
 *.txt
+# Ignore video files anywhere
+*.mp4
 # Ignore csv files anywhere
 *.csv
