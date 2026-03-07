@@ -13,11 +13,11 @@ model = YOLO("yolo26n-pose.pt")  # or whatever pose checkpoint you're using
 model.train(
     data="C:\\Users\\melon\\OneDrive\\Desktop\\OpenCV\\train_table\\data.yaml",
     epochs=300,
-    patience=20,          # early stopping
+    patience=100,          # early stopping
     imgsz=640,
-    batch=-1,             # autobatch
+    batch=30,             # -1 autobatch
     ## device=0,             # GPU 0 (change if needed)
-    workers=2,            # Windows-safe start; raise if stable
+    workers=4,            # Windows-safe start; raise if stable
     cache=True,
     amp=True,
     optimizer="auto",
