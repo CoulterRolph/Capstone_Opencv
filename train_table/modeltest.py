@@ -1,8 +1,8 @@
 from ultralytics import YOLO
 import cv2 as cv
 
-MODEL_PATH = "C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\best_weights\\table_best_002.pt"   # can also be "model.onnx"
-CAM_INDEX = 1            # try 0 or 1
+MODEL_PATH = "C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\best_weights\\table_best_003.pt"   # can also be "model.onnx"
+CAM_INDEX = 0            # try 0 or 1
 
 model = YOLO(MODEL_PATH)
 
