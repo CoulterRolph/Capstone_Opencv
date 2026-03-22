@@ -4,14 +4,14 @@ from datetime import datetime
 # ======================
 # CONFIG (edit these)
 # ======================
-DIRECTORY = r"c:\\Users\\diplo\\Pictures\\Camera Roll\\training"
-PREFIX = "tcube"
+DIRECTORY = r"C:\\Users\\diplo\\Pictures\\Camera Roll\\training_ball"
+PREFIX = "ball_player"  # e.g. "webcam", "session1", etc.
 
 # Use today's date automatically (YYYYMMDD). Or set manually like "20260304".
 DATE_STR = datetime.now().strftime("%Y%m%d")
 
 # Rename only certain file types (set to None to rename all files)
-EXTENSIONS = {".jpg", ".png", ".mp4"}  # <- edit
+EXTENSIONS = {".jpg", ".png", ".mp4", ".mov"}  # <- edit
 # EXTENSIONS = None  # <- uncomment to rename all files
 
 # Starting index + padding width (0001, 0002, ...)
