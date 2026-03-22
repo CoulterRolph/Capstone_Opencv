@@ -8,7 +8,7 @@ import time
 # =========================
 MODEL_PATH = "C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\best_weights\\table_best_003.pt"
 INPUT_VIDEO = "C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\raw_videos\\tcube_20260304_012.mp4"
-OUTPUT_VIDEO = "C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\annotated_videos\\annotatedtcube_20260304_012.mp4"
+OUTPUT_VIDEO = "C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\annotated_videos\\annotatedtcube_20260304_012_table003.mp4"
 
 # Inference settings
 IMGSZ = 640
