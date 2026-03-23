@@ -4,7 +4,7 @@
 #import ultralytics
 #import cv2 as cv
 #import tkinter as tk
-#import numpy as np
+import numpy as np
 
 # libraries
 from classes.objects import img_point, player, table
@@ -44,9 +44,16 @@ def main():
     else:
         print("Successfully read a frame from the video.")
 
-    # collect 10 frames, but stop after 240 frames if not enough are found
-    table_frames = table.collect_table_frames(cap, 10, 240) 
-    print(f"Collected {len(table_frames)} valid table frames.")
+    # Collect up to 5 valid points, but stop if 120 frames are read without finding 20 valid sets of keypoints.
+    table_keypoints = table.collect_table_keypoints(cap, 5, 120) 
+
+    table.print_table_numpy_keypoints(table_keypoints)
+
+    detected_table = table.build_table_from_keypoints(table_keypoints)
+
+    table.print_table_object_keypoints(detected_table)
+
+
     #record the position of the table corners and net position
 
     #calculate the homography matrix for the table corners and net position
