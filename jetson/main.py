@@ -8,16 +8,10 @@
 
 # libraries
 from classes.objects import img_point, player, table
-from imaging.table_detection import webcam_test
-#import opencv.table_detection as table_detection
+from imaging import video
+from imaging import table
 
-from test import test_class
-
-MODEL_PATH = "C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\best_weights\\table_best_003.pt"
-INPUT_VIDEO = "C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\raw_videos\\tcube_20260304_012.mp4"
-OUTPUT_VIDEO = "C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\annotated_videos\\annotatedtcube_20260304_012_table003.mp4"
-
-CAM_INDEX = 0   # try 0 or 1
+VIDEO_PATH = r"C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\raw_videos\\tcube_20260304_012.mp4"  
 
 print("\nMAIN STARTED\n")
 
@@ -27,17 +21,37 @@ def main():
     print("Welcome to tcubed!")
     print("\n|===========================================|\n")
 
-    print("\n|===========================================|\n")
-    print("Training will start soon...")
-    print("\n|===========================================|\n")
+    loaded = table.load_table_model()
+    if not loaded:
+        print("Failed to load the table model. Exiting.")
+        return
 
     print("\n|===========================================|\n")
-    print("Set the position of the device")
+    print("Openning the video!")
     print("\n|===========================================|\n")
 
-    # open the webcam and show the user how to a guideline on how to set up the machine 
+    #open the video 
+    cap = video.open_video(VIDEO_PATH)
+    if cap is None:
+        print("Failed to open video.")
 
-    webcam_test()
+    ret, frame = cap.read()
+    # Exit if the frame could not be read.
+    if not ret:
+        print("Failed to read frame from video.")
+        cap.release()
+        return
+    else:
+        print("Successfully read a frame from the video.")
+
+    # collect 10 frames, but stop after 240 frames if not enough are found
+    table_frames = table.collect_table_frames(cap, 10, 240) 
+    print(f"Collected {len(table_frames)} valid table frames.")
+    #record the position of the table corners and net position
+
+    #calculate the homography matrix for the table corners and net position
+
+
 
 if __name__ == "__main__":
     main()

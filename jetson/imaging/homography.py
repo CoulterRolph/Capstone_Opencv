@@ -5,3 +5,9 @@
 
 import cv2 as cv
 import numpy as np  
+
+from classes.objects import img_point, table
+
+#table keypoints
+
+#actual table dimensions in metres
