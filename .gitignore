@@ -18,7 +18,7 @@
 *.txt
 
 # But, track requirements.txt
-!requirements.txt
+!requirement.txt
 
 # Ignore video files anywhere
 *.mp4
