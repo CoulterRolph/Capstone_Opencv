@@ -4,26 +4,11 @@ import cv2 as cv
 from ultralytics import YOLO
 
 
-TARGET_CLASS = "orange"
-
-MODEL_CANDIDATES = [
-    Path(__file__).resolve().parent / "yolo26n.pt",
-    Path(__file__).resolve().parent.parent / "yolo26n.pt",
-]
-
-
-def find_model_path():
-    for model_path in MODEL_CANDIDATES:
-        if model_path.exists():
-            return model_path
-    searched = "\n".join(str(path) for path in MODEL_CANDIDATES)
-    raise FileNotFoundError(
-        f"Could not find yolo26n.pt. Checked:\n{searched}"
-    )
+TARGET_CLASS = "ball"
 
 
 def main():
-    model = YOLO("yolo26n.pt")
+    model = YOLO("C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\best_weights\\ball_player_best_001.pt")
     cap = cv.VideoCapture(1)
 
     if not cap.isOpened():

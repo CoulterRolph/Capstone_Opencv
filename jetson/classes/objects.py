@@ -38,6 +38,19 @@ class player:
     def __str__(self):
         return f"Player(name={self.name}, position={self.position})"
 
+class ball:
+    def __init__(self, position=None):
+        self.position = position if position is not None else img_point()
+
+    def set_position(self, position):
+        self.position = position
+
+    def set_position_xy(self, x, y):
+        self.position.set(x, y)
+
+    def __str__(self):
+        return f"Player(name={self.name}, position={self.position})"
+
 class table:
     def __init__(self, corners=None, net_position=None):
         self.corners = corners if corners is not None else [
