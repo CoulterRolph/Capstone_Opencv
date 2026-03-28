@@ -1,29 +1,37 @@
-# main.py 
+# main.py
 
-# dependancies:
-#import ultralytics
+# Import OpenCV for video reading, drawing, and window display.
 import cv2 as cv
-#import tkinter as tk
-import numpy as np
+
+# Import Path so output video filenames can be constructed cleanly.
 from pathlib import Path
 
-# libraries
-from classes.objects import img_point, player, table
-from imaging import homography, heatmap, table, ball, video   
+# Import the table class types if you still want access to them directly later.
+from classes.objects import img_point, player, table as table_object
 
-VIDEO_PATH = r"C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\raw_videos\\tcube_20260304_012.mp4"  
+# Import the imaging modules.
+# Alias the table module so it is clear this is the detection module, not the table class.
+from imaging import homography, heatmap, table as table_detection, ball, video
+
+# Store the path to the input video file.
+VIDEO_PATH = r"C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\raw_videos\\tcube_20260304_012.mp4"
+
+# Store the path to the ball detection model.
 BALL_MODEL_PATH = r"C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\jetson\\models\\ball_player_detect.pt"
-RECORD = True  # Set to True to save the processed video with annotations, or False to skip saving.
 
+# Store whether the annotated output video should be saved.
+RECORD = False
+
+
+# Run the full tcubed pipeline.
 def main():
-
     # Print a banner so it is obvious that the program has started.
     print("\n|===========================================|\n")
     print("Welcome to tcubed!")
     print("\n|===========================================|\n")
 
     # Load the table model before starting any video processing.
-    loaded = table.load_table_model()
+    loaded = table_detection.load_table_model()
 
     # Stop the program if the table model failed to load.
     if not loaded:
@@ -76,7 +84,7 @@ def main():
             fps = 30.0
 
         # Read the first frame from the video.
-        ret, frame = cap.read()
+        ret, first_frame = cap.read()
 
         # Stop if the first frame could not be read.
         if not ret:
@@ -87,15 +95,90 @@ def main():
         # Print confirmation that the first frame was read successfully.
         print("Successfully read a frame from the video.")
 
-        # Collect table keypoints from the video so the table can be estimated.
-        table_keypoints = table.collect_table_keypoints(cap, 5, 120)
+        # Create a list that will hold valid table keypoint detections.
+        table_keypoints = []
 
-        # Build the table object from the detected keypoints.
-        detected_table = table.build_table_from_keypoints(table_keypoints)
+        # Store how many frames have been checked for table detection.
+        frames_read_for_table = 0
+
+        # Check the first frame for table keypoints before reading any more frames.
+        first_frame_keypoints = table_detection.get_table_keypoints(first_frame)
+
+        # Count the first frame as one checked frame.
+        frames_read_for_table += 1
+
+        # Store the keypoints if the table was detected in the first frame.
+        if first_frame_keypoints is not None:
+            # Add the detected keypoints from the first frame into the collection list.
+            table_keypoints.append(first_frame_keypoints)
+
+            # Print progress so it is clear that the first frame produced a valid detection.
+            print(
+                f"Collected {len(table_keypoints)} / 5 keypoint sets "
+                f"after reading {frames_read_for_table} / 120 frames."
+            )
+        else:
+            # Print progress so it is clear that the first frame did not produce a valid detection.
+            print(
+                f"No table keypoints detected in this frame. "
+                f"Frames read: {frames_read_for_table} / 120"
+            )
+
+        # Keep reading frames until enough valid table detections have been collected
+        # or until the maximum number of frames has been checked.
+        while len(table_keypoints) < 5 and frames_read_for_table < 120:
+            # Read the next frame from the video.
+            ret, frame = cap.read()
+
+            # Stop if the video ended or a frame could not be read.
+            if not ret:
+                # Print a message so it is clear why table detection stopped.
+                print("End of video reached before enough table keypoints were found.")
+                break
+
+            # Count this frame as one checked frame.
+            frames_read_for_table += 1
+
+            # Run table keypoint detection on the current frame.
+            keypoints = table_detection.get_table_keypoints(frame)
+
+            # Check whether valid keypoints were returned.
+            if keypoints is not None:
+                # Store the detected keypoints for later averaging.
+                table_keypoints.append(keypoints)
+
+                # Print progress so it is clear how many usable detections were found.
+                print(
+                    f"Collected {len(table_keypoints)} / 5 keypoint sets "
+                    f"after reading {frames_read_for_table} / 120 frames."
+                )
+            else:
+                # Print progress so it is clear that this frame did not contain a usable detection.
+                print(
+                    f"No table keypoints detected in this frame. "
+                    f"Frames read: {frames_read_for_table} / 120"
+                )
+
+        # Print a message if the loop stopped because the frame limit was reached.
+        if frames_read_for_table >= 120 and len(table_keypoints) < 5:
+            # Print a message so it is clear that detection stopped due to the frame budget.
+            print("Stopped searching because the maximum frame limit was reached.")
+
+        # Build the table object from the collected keypoints.
+        detected_table = table_detection.build_table_from_keypoints(table_keypoints)
+
+        # Stop the program if a valid table could not be built.
+        if detected_table is None:
+            # Print an error message so it is clear why the program stopped.
+            print("Failed to build the table object. Exiting.")
+            return
 
         # Print the detected table object so you can inspect the result.
         print("\nDetected table:")
         print(detected_table)
+
+        # Print the table object keypoints in a readable format for debugging.
+        table_detection.print_table_object_keypoints(detected_table)
 
         # Compute the homography using the detected table.
         H, src_points, dst_points, output_size = homography.compute_table_homography(
@@ -119,7 +202,7 @@ def main():
         print("\nOutput size:")
         print(output_size)
 
-        # Rewind the video because table keypoint collection advanced the capture position.
+        # Rewind the video back to the start so full processing can begin from frame 0.
         cap.set(cv.CAP_PROP_POS_FRAMES, 0)
 
         # If recording is enabled, prepare the output video writer now.
@@ -131,10 +214,10 @@ def main():
             output_path = input_path.with_name(f"{input_path.stem}_PROCESSED{input_path.suffix}")
 
             # Read the width of the output video frames in pixels from the first frame.
-            frame_width = frame.shape[1]
+            frame_width = first_frame.shape[1]
 
             # Read the height of the output video frames in pixels from the first frame.
-            frame_height = frame.shape[0]
+            frame_height = first_frame.shape[0]
 
             # Create the four-character codec code for writing an MP4-compatible video.
             fourcc = cv.VideoWriter_fourcc(*"mp4v")
@@ -152,9 +235,8 @@ def main():
                 # Print an error and stop recording if the writer failed to open.
                 print(f"Failed to open output video for writing: {output_path}")
                 writer = None
-
-            # Print the output path so you know where the processed video will be saved.
             else:
+                # Print the output path so you know where the processed video will be saved.
                 print(f"Recording enabled. Saving annotated video to: {output_path}")
 
         # Print a message so it is clear that frame-by-frame processing is starting.
@@ -238,5 +320,7 @@ def main():
         # Close all OpenCV windows so the program exits cleanly.
         cv.destroyAllWindows()
 
+
+# Run the program only when this file is executed directly.
 if __name__ == "__main__":
     main()

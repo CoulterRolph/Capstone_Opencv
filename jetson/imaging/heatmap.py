@@ -202,8 +202,13 @@ def draw_overlay(frame, state, output_size, overlay_height=260, margin=20):
     cv.rectangle(frame, (left, top), (right, bottom), (40, 120, 40), -1)
     cv.rectangle(frame, (left, top), (right, bottom), (255, 255, 255), 2)
 
+    # Horizontal net line
     net_y = top + overlay_height // 2
     cv.line(frame, (left, net_y), (right, net_y), (255, 255, 255), 2)
+
+    # Thin vertical center line along the table
+    center_x = left + overlay_width // 2
+    cv.line(frame, (center_x, top), (center_x, bottom), (255, 255, 255), 1)
 
     for mapped_point in state.mapped_bounce_points:
         overlay_point = map_table_point_to_overlay(mapped_point, output_size, overlay_rect)
