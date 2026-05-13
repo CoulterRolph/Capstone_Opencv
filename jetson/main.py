@@ -287,7 +287,7 @@ def main():
                 frame=annotated_frame,
                 state=heatmap_state,
                 output_size=output_size,
-                overlay_height=260,
+                overlay_height=500,
                 margin=20,
             )
 

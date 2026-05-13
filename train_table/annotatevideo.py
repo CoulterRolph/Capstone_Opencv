@@ -19,8 +19,8 @@ CONF_THRES = 0.25
 KEYPOINT_NAMES = [
     "NearLeft_Corner",
     "NearRight_Corner",
-    "FarLeft_Corner",
     "FarRight_Corner",
+    "FarLeft_Corner",
     "Left_Net",
     "Right_Net"
 ]
@@ -73,68 +73,99 @@ def main():
         inference_ms = (t1 - t0) * 1000.0
         inference_fps = 1.0 / (t1 - t0) if (t1 - t0) > 0 else 0.0
 
+       # Read the first result object for the current frame.
         r = results[0]
-        annotated = r.plot()
 
-        # -------------------------
-        # Draw keypoint labels
-        # -------------------------
+        # Draw the detections using a thin bounding box and larger default keypoints.
+        # Built-in labels and confidence text are disabled because custom keypoint labels
+        # are drawn below with OpenCV.
+        annotated = r.plot(
+            line_width=1,
+            kpt_radius=8,
+            kpt_line=False,
+            labels=False,
+            conf=False
+        )
+
+        # Check whether any keypoints were detected in this frame.
         if r.keypoints is not None and len(r.keypoints) > 0:
+            # Copy the keypoint x and y coordinates from the model output into NumPy arrays.
             xy = r.keypoints.xy.cpu().numpy()
+
+            # Copy the keypoint confidence values into a NumPy array.
             kc = r.keypoints.conf.cpu().numpy()
 
+            # Loop through each detected table instance.
             for inst_idx in range(xy.shape[0]):
+                # Loop through each keypoint for the current table instance.
                 for kpt_idx in range(xy.shape[1]):
+                    # Read the x and y position of the current keypoint in image pixels.
                     x, y = xy[inst_idx, kpt_idx]
+
+                    # Read the confidence of the current keypoint.
                     conf = kc[inst_idx, kpt_idx]
 
+                    # Skip this keypoint if its confidence is too low.
                     if conf < KPT_DRAW_THRES:
                         continue
 
-                    x_i, y_i = int(x), int(y)
+                    # Convert the keypoint location into integer pixel coordinates.
+                    x_i = int(x)
+                    y_i = int(y)
 
+                    # Draw a larger white outer circle so the keypoint stands out clearly.
+                    cv.circle(
+                        annotated,
+                        (x_i, y_i),
+                        10,
+                        (255, 255, 255),
+                        -1
+                    )
+
+                    # Draw a smaller inner circle on top of the white circle.
+                    cv.circle(
+                        annotated,
+                        (x_i, y_i),
+                        6,
+                        (125, 0, 255),
+                        -1
+                    )
+
+                    # Choose a readable keypoint name if one exists in the name list.
                     if kpt_idx < len(KEYPOINT_NAMES):
                         kpt_name = KEYPOINT_NAMES[kpt_idx]
                     else:
                         kpt_name = f"kpt_{kpt_idx}"
 
+                    # Build the coordinate label using image pixel coordinates.
+                    coord_label = f"({x_i}, {y_i})"
+
+                    # Build the label text showing the keypoint name and confidence.
                     label = f"{kpt_name}: {conf:.2f}"
 
+                    # Draw the x and y coordinates above the keypoint annotation.
                     cv.putText(
                         annotated,
-                        label,
-                        (x_i + 8, y_i - 8),
+                        coord_label,
+                        (x_i + 12, y_i - 38),
                         cv.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 255, 255),
-                        1,
+                        0.8,
+                        (125, 0, 255),
+                        2,
                         cv.LINE_AA
                     )
 
-        # -------------------------
-        # Draw inference stats
-        # -------------------------
-        cv.putText(
-            annotated,
-            f"Inference: {inference_ms:.1f} ms",
-            (15, 30),
-            cv.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 0),
-            2,
-            cv.LINE_AA
-        )
-
-        cv.putText(
-            annotated,
-            f"Model FPS: {inference_fps:.1f}",
-            (15, 60),
-            cv.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 0),
-            2,
-            cv.LINE_AA
-        )
+                    # Draw the keypoint name and confidence slightly below the coordinate text.
+                    cv.putText(
+                        annotated,
+                        label,
+                        (x_i + 12, y_i - 12),
+                        cv.FONT_HERSHEY_SIMPLEX,
+                        0.9,
+                        (0, 0, 255),
+                        2,
+                        cv.LINE_AA
+                    )
 
         out.write(annotated)
         cv.imshow("Annotated Video", annotated)

@@ -13,7 +13,7 @@ TABLE_WIDTH_MM = 1525.0
 
 
 # Define a small class that stores all mapped bounce points.
-class HeatmapState:
+class HeatmapState: 
     def __init__(self):
         # Store bounce points after they have been mapped into table coordinates.
         self.mapped_bounce_points = []
@@ -57,7 +57,7 @@ def transform_bounce_point(bounce_point, H):
     mapped_x = float(mapped_array[0][0][0])
 
     # Read the transformed y-coordinate in the table plane.
-    mapped_y = float(mapped_array[0][0][1])
+    mapped_y = float(mapped_array[0][0][1]) 
 
     # Return the mapped point so it can be stored and drawn later.
     return (mapped_x, mapped_y)
@@ -130,7 +130,7 @@ def add_bounce_point(state, bounce_point, H, output_size):
     return mapped_point
 
 
-def get_overlay_rect(frame, overlay_height=260, margin=20):
+def get_overlay_rect(frame, overlay_height=600, margin=20):
     """
     Compute the top-right overlay rectangle for a table rotated 90 degrees.
     """
@@ -188,7 +188,7 @@ def map_table_point_to_overlay(mapped_point, output_size, overlay_rect):
     return (overlay_x, overlay_y)
 
 
-def draw_overlay(frame, state, output_size, overlay_height=260, margin=20):
+def draw_overlay(frame, state, output_size, overlay_height=600, margin=20):
     """
     Draw a small top-right table rectangle, a middle net, and all mapped bounce points.
 
