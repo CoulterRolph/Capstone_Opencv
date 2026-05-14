@@ -1,5 +1,6 @@
 # Ignore the entire pingpong folder at the repo root
 /pingpong/
+/venv/
 
 # Ignore the entire train_ball_player folder at the repo root
 /train_ball_player/test/
