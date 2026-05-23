@@ -11,7 +11,7 @@ from ultralytics import YOLO
 from classes.objects import table
 
 # Store the default model path for the table keypoint detector.
-TABLE_MODEL_PATH = r"C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\jetson\\models\\table_keypoints.pt"
+TABLE_MODEL_PATH = "/workspace/tcubed/project/jetson/models/table_keypoints.pt"
 
 # Store the loaded model in a module-level variable so it only has to be loaded once.
 table_model = None

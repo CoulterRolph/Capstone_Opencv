@@ -12,17 +12,23 @@
 /train_table/train/
 /train_table/valid/
 
+#ignore the recorded video files
+/jetson/capture/recordings
+
 # Ignore image files anywhere
 *.jpg
 *.jpeg
 *.png
 *.txt
+*.avi
 
 # But, track requirements.txt
 !requirement.txt
 
 # Ignore video files anywhere
 *.mp4
+*.mkv
+*.mov
 
 # Ignore csv files anywhere
 *.csv
