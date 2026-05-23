@@ -1,5 +1,6 @@
 # recording.py
 # Recording functionalities.
+
 #!/usr/bin/env python3
 
 from datetime import datetime
@@ -9,28 +10,19 @@ import subprocess
 import threading
 import time
 
-
-# Configure the camera capture mode. These values should match a supported MJPG mode from v4l2-ctl.
-CAMERA_DEVICE = "/dev/video0"
-FRAME_WIDTH = 1280
-FRAME_HEIGHT = 720
-FRAME_RATE = 60
-
-
-# Configure where recordings are saved and how filenames are generated.
-OUTPUT_FOLDER = "recordings"
-OUTPUT_PREFIX = "table_tennis"
-USE_TIMESTAMPED_FILENAME = True
-FIXED_OUTPUT_FILENAME = "table_tennis_latest.mkv"
-
-
-# Configure GStreamer buffering. At 120 fps, 240 buffers is about 2 seconds of buffering.
-QUEUE_BUFFER_COUNT = 120
-QUEUE_LEAK_MODE = "no"
-
-
-# Configure how long the recorder waits for GStreamer to finalize the MKV file after stopping.
-STOP_TIMEOUT_SECONDS = 10
+from recording_config import (
+    CAMERA_DEVICE,
+    RECORDING_WIDTH,
+    RECORDING_HEIGHT,
+    RECORDING_FPS,
+    RECORDINGS_DIR,
+    RECORDING_OUTPUT_PREFIX,
+    USE_TIMESTAMPED_RECORDING_NAME,
+    FIXED_RECORDING_FILENAME,
+    GST_QUEUE_BUFFER_COUNT,
+    GST_QUEUE_LEAK_MODE,
+    RECORDING_STOP_TIMEOUT_SECONDS,
+)
 
 
 class MjpegRecorder:
@@ -44,33 +36,47 @@ class MjpegRecorder:
         self.watcher_thread = None
 
     def _log(self, message):
-        # Send status messages to the GUI when a callback is available, otherwise print to the terminal.
+        # Send status messages to the GUI when a callback is available,
+        # otherwise print to the terminal.
         if self.status_callback is not None:
             self.status_callback(message)
         else:
             print(message)
 
     def build_output_path(self):
-        # Create the output folder and build either a timestamped filename or a fixed filename.
-        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+        # Create the recordings folder if it does not already exist.
+        RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 
-        if USE_TIMESTAMPED_FILENAME:
+        if USE_TIMESTAMPED_RECORDING_NAME:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{OUTPUT_PREFIX}_{FRAME_WIDTH}x{FRAME_HEIGHT}_{FRAME_RATE}fps_{timestamp}.mkv"
+            filename = (
+                f"{RECORDING_OUTPUT_PREFIX}_"
+                f"{RECORDING_WIDTH}x{RECORDING_HEIGHT}_"
+                f"{RECORDING_FPS}fps_"
+                f"{timestamp}.mkv"
+            )
         else:
-            filename = FIXED_OUTPUT_FILENAME
+            filename = FIXED_RECORDING_FILENAME
 
-        # Returns the relative or absolute path that GStreamer should write to.
-        return os.path.join(OUTPUT_FOLDER, filename)
+        return RECORDINGS_DIR / filename
 
     def build_gstreamer_command(self, output_path):
-        # Build the MJPG direct-to-MKV pipeline. This avoids decoding and re-encoding frames during capture.
-        caps_setting = f"image/jpeg,width={FRAME_WIDTH},height={FRAME_HEIGHT},framerate={FRAME_RATE}/1"
-        queue_size = f"max-size-buffers={QUEUE_BUFFER_COUNT}"
-        queue_leak_mode = f"leaky={QUEUE_LEAK_MODE}"
-        file_location = f"location={output_path}"
+        # Build the MJPG direct-to-MKV pipeline.
+        # This avoids decoding and re-encoding frames during capture.
+        caps_setting = (
+            f"image/jpeg,"
+            f"width={RECORDING_WIDTH},"
+            f"height={RECORDING_HEIGHT},"
+            f"framerate={RECORDING_FPS}/1"
+        )
 
-        # The command uses timestamped camera buffers, parses MJPEG frames, and stores them in an MKV container.
+        queue_size = f"max-size-buffers={GST_QUEUE_BUFFER_COUNT}"
+        queue_leak_mode = f"leaky={GST_QUEUE_LEAK_MODE}"
+
+        # GStreamer expects a normal string path.
+        # output_path is a pathlib.Path object, so convert it to str.
+        file_location = f"location={str(output_path)}"
+
         return [
             "gst-launch-1.0",
             "-e",
@@ -123,19 +129,30 @@ class MjpegRecorder:
             self.current_output_path = self.build_output_path()
             command = self.build_gstreamer_command(self.current_output_path)
 
-            self._log(f"Starting recording: {FRAME_WIDTH}x{FRAME_HEIGHT} at {FRAME_RATE} fps.")
+            self._log(
+                f"Starting recording: "
+                f"{RECORDING_WIDTH}x{RECORDING_HEIGHT} at {RECORDING_FPS} fps."
+            )
             self._log(f"Output file: {self.current_output_path}")
 
-            # Stage 3: Start GStreamer in its own process group so the stop button can interrupt it cleanly.
+            # Stage 3: Start GStreamer in its own process group.
+            # This allows stop_recording() to send SIGINT cleanly.
             try:
                 self.process = subprocess.Popen(command, preexec_fn=os.setsid)
             except FileNotFoundError:
                 self.process = None
-                self._log("gst-launch-1.0 was not found. Run this on the Jetson host or install GStreamer tools.")
+                self._log(
+                    "gst-launch-1.0 was not found. "
+                    "Run this on the Jetson host or install GStreamer tools."
+                )
                 return False
 
-            # Stage 4: Watch the GStreamer process in the background so the GUI does not freeze.
-            self.watcher_thread = threading.Thread(target=self._watch_process, daemon=True)
+            # Stage 4: Watch the GStreamer process in the background.
+            # This prevents the GUI from freezing while recording.
+            self.watcher_thread = threading.Thread(
+                target=self._watch_process,
+                daemon=True,
+            )
             self.watcher_thread.start()
 
             return True
@@ -153,7 +170,8 @@ class MjpegRecorder:
 
             process_id = self.process.pid
 
-        # Stage 2: Send SIGINT to GStreamer so the -e flag can finalize the MKV file properly.
+        # Stage 2: Send SIGINT to GStreamer.
+        # The -e flag lets GStreamer finalize the MKV file properly.
         self._log("Stopping recording and finalizing the MKV file.")
 
         try:
@@ -164,8 +182,9 @@ class MjpegRecorder:
 
         return True
 
-    def wait_until_stopped(self, timeout_seconds=STOP_TIMEOUT_SECONDS):
-        # Wait for GStreamer to exit when a blocking shutdown is acceptable, such as in a terminal test.
+    def wait_until_stopped(self, timeout_seconds=RECORDING_STOP_TIMEOUT_SECONDS):
+        # Wait for GStreamer to exit when a blocking shutdown is acceptable.
+        # This is useful for terminal testing, but the GUI should usually avoid blocking.
         with self.process_lock:
             process = self.process
 
@@ -202,14 +221,43 @@ class MjpegRecorder:
         else:
             self._log(f"Recording process exited with code {return_code}: {output_path}")
 
-        # Notify the GUI after recording finishes. GUI frameworks may require this callback to schedule UI updates safely.
+        # Notify the GUI after recording finishes.
+        # Some GUI frameworks may require this callback to schedule UI updates safely.
         if self.finished_callback is not None:
             self.finished_callback(output_path, return_code)
 
 
-# Provide a default recorder object so main.py can import and use it directly.
+# ============================================================
+# Default recorder instance
+# ============================================================
+
+# main.py can import and use this object directly.
 recorder = MjpegRecorder()
 
+
+# ============================================================
+# Convenience wrapper functions
+# ============================================================
+
+def start_recording():
+    return recorder.start_recording()
+
+
+def stop_recording():
+    return recorder.stop_recording()
+
+
+def is_recording():
+    return recorder.is_recording()
+
+
+def get_current_output_path():
+    return recorder.get_current_output_path()
+
+
+# ============================================================
+# Standalone test
+# ============================================================
 
 def main():
     # Run a standalone terminal test when this file is executed directly.
@@ -233,19 +281,3 @@ if __name__ == "__main__":
     import sys
 
     sys.exit(main())
-
-
-#######################################################
-# To use this:
-#
-# from recording import recorder
-#
-#
-# def start_recording_button_pressed():
-#     recorder.start_recording()
-#
-#
-# def stop_recording_button_pressed():
-#     recorder.stop_recording()
-#
-########################################################
