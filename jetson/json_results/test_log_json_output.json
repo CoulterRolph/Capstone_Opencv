@@ -1,0 +1,106 @@
+{
+    "session": {
+        "video_path": "capture/recordings/sample_001.mkv",
+        "analysis_time": "2026-05-24T01:36:51",
+        "json_output_version": "1.0"
+    },
+    "video": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30.0,
+        "frame_count": 1854,
+        "duration_seconds": 61.8
+    },
+    "table": {
+        "table_detected": false,
+        "corners": {}
+    },
+    "homography": {
+        "homography_found": true,
+        "homography_matrix": [
+            [
+                -17.2549991607666,
+                -13.378999710083008,
+                16691.0
+            ],
+            [
+                -0.0932610034942627,
+                -23.92099952697754,
+                8866.7001953125
+            ],
+            [
+                -0.00010106000263476744,
+                -0.022513000294566154,
+                1.0
+            ]
+        ],
+        "source_points": [
+            [
+                682.0,
+                368.0
+            ],
+            [
+                1195.0,
+                366.0
+            ],
+            [
+                1632.0,
+                916.0
+            ],
+            [
+                254.0,
+                920.0
+            ]
+        ],
+        "destination_points": [
+            [
+                0.0,
+                0.0
+            ],
+            [
+                1199.0,
+                0.0
+            ],
+            [
+                1199.0,
+                667.0
+            ],
+            [
+                0.0,
+                667.0
+            ]
+        ],
+        "output_size": [
+            1200,
+            668
+        ]
+    },
+    "bounces": [
+        {
+            "bounce_id": 1,
+            "frame_index": 100,
+            "time_seconds": 3.33,
+            "image_position": {
+                "x": 850,
+                "y": 600
+            },
+            "table_position_pixels": {
+                "x": 510.5,
+                "y": 320.25
+            },
+            "table_position_normalized": {
+                "x": 0.426,
+                "y": 0.48
+            },
+            "confidence": 0.8
+        }
+    ],
+    "summary": {
+        "total_bounces": 1
+    },
+    "quality_flags": {
+        "table_detection_failed": false,
+        "homography_failed": false,
+        "no_bounces_detected": false
+    }
+}

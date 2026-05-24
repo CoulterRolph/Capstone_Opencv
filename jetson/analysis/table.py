@@ -1,207 +1,532 @@
-# table_detection.py
-# The purpose of this file is to detect the table and report its corners.
+# analysis/table.py
 
-# Import NumPy for array handling and averaging operations.
+"""
+Table detection functions for the analysis pipeline.
+
+This file is responsible for:
+- Loading the table model
+- Running table keypoint detection
+- Extracting the four table corners
+- Building a detected table object
+
+Important:
+- Homography only needs the four table corners.
+- Net keypoints are ignored.
+- If the table model outputs 6 keypoints, only keypoints 0 to 3 are used.
+
+Expected corner keypoint order:
+    0 = bottom-left corner
+    1 = bottom-right corner
+    2 = top-right corner
+    3 = top-left corner
+"""
+
+
+# ============================================================
+# Imports
+# ============================================================
+
+import sys
+import time
+from pathlib import Path
+
 import numpy as np
-
-# Import the YOLO class used to load and run the table keypoint model.
 from ultralytics import YOLO
 
-# Import the table class so detected keypoints can be stored inside your table object.
+
+# ============================================================
+# Import analysis configuration
+# ============================================================
+
+# This try/except supports both:
+#
+# 1. Module-style execution:
+#    python3 -m analysis.analysis
+#
+# 2. Direct file execution:
+#    python3 analysis/analysis.py
+
+try:
+    from analysis_config import (
+        PROJECT_ROOT,
+        TABLE_MODEL_PATH,
+        TABLE_MODEL_IMGSZ,
+        TABLE_MODEL_CONFIDENCE,
+        TABLE_REQUIRED_KEYPOINT_COUNT,
+        TABLE_DETECTION_MAX_FRAMES,
+        TABLE_DETECTION_FRAME_STEP,
+        TABLE_DETECTION_MIN_SUCCESSFUL_FRAMES,
+    )
+except ModuleNotFoundError:
+    from analysis.analysis_config import (
+        PROJECT_ROOT,
+        TABLE_MODEL_PATH,
+        TABLE_MODEL_IMGSZ,
+        TABLE_MODEL_CONFIDENCE,
+        TABLE_REQUIRED_KEYPOINT_COUNT,
+        TABLE_DETECTION_MAX_FRAMES,
+        TABLE_DETECTION_FRAME_STEP,
+        TABLE_DETECTION_MIN_SUCCESSFUL_FRAMES,
+    )
+
+
+# ============================================================
+# Import project classes
+# ============================================================
+
+# table.py is inside:
+#   project/jetson/analysis/table.py
+#
+# classes/objects.py is inside:
+#   project/jetson/classes/objects.py
+#
+# Adding PROJECT_ROOT to sys.path allows this import to work.
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from classes.objects import table
 
-# Store the default model path for the table keypoint detector.
-TABLE_MODEL_PATH = "/workspace/tcubed/project/jetson/models/table_keypoints.pt"
 
-# Store the loaded model in a module-level variable so it only has to be loaded once.
+# ============================================================
+# Module-level model cache
+# ============================================================
+
 table_model = None
 
 
-# Load the table model if it has not already been loaded.
+# ============================================================
+# Model loading
+# ============================================================
+
 def load_table_model(model_path=TABLE_MODEL_PATH):
-    # Tell Python that this function will modify the module-level model variable.
+    """
+    Load the table keypoint model.
+
+    The loaded model is cached in the module so we do not reload it every time
+    we analyze a frame.
+
+    Args:
+        model_path:
+            Path to the table model file.
+
+    Returns:
+        Loaded YOLO model.
+    """
+
     global table_model
 
-    # If the model is already loaded, do not load it again.
     if table_model is not None:
-        # Print confirmation so it is clear that the cached model is being reused.
-        print("Table model already loaded.")
-        return True
+        print("Table model already loaded.", flush=True)
+        return table_model
 
-    # Try to load the model from the provided path.
-    try:
-        # Create the YOLO model object from the given model path.
-        table_model = YOLO(model_path)
+    model_path = Path(model_path)
 
-        # Print confirmation so it is clear that model loading succeeded.
-        print("Table model loaded successfully.")
-        return True
+    if not model_path.exists():
+        raise FileNotFoundError(f"Table model file does not exist: {model_path}")
 
-    # Handle any model-loading error cleanly.
-    except Exception as e:
-        # Print the error so it is easier to debug why loading failed.
-        print(f"Failed to load table model: {e}")
+    print(f"Loading table model: {model_path}", flush=True)
 
-        # Reset the cached model to None because loading did not succeed.
-        table_model = None
-        return False
+    table_model = YOLO(str(model_path))
+
+    print("Table model loaded successfully.", flush=True)
+
+    return table_model
 
 
-# Get the detected table keypoints from a single frame.
-def get_table_keypoints(frame, imgsz=640):
-    # Check whether the table model has been loaded before trying inference.
-    if table_model is None:
-        # Print an error message so it is clear why inference cannot run.
-        print("Table model is not loaded.")
-        return None
+# ============================================================
+# Frame-level table detection
+# ============================================================
 
-    # Run inference on the current frame using the preloaded table model.
-    results = table_model(frame, imgsz=imgsz, verbose=False)
+def get_table_keypoints_from_frame(
+    frame,
+    model=None,
+    imgsz=TABLE_MODEL_IMGSZ,
+    confidence=TABLE_MODEL_CONFIDENCE,
+):
+    """
+    Run the table model on one frame and return detected keypoints.
 
-    # Stop early if the model returned no results at all.
+    Args:
+        frame:
+            OpenCV frame.
+        model:
+            Optional preloaded YOLO model.
+        imgsz:
+            YOLO inference image size.
+        confidence:
+            YOLO confidence threshold.
+
+    Returns:
+        NumPy array of detected keypoints, or None if detection failed.
+
+    Note:
+        The model may output more than four keypoints.
+        Homography only needs the first four corner keypoints.
+    """
+
+    if frame is None:
+        raise ValueError("Frame is None. Cannot detect table.")
+
+    if model is None:
+        model = load_table_model()
+
+    start_time = time.perf_counter()
+
+    results = model(
+        frame,
+        imgsz=imgsz,
+        conf=confidence,
+        verbose=False,
+    )
+
+    elapsed_time = time.perf_counter() - start_time
+
+    print(f"Table model inference time: {elapsed_time:.2f} seconds", flush=True)
+
     if results is None or len(results) == 0:
+        print("Table model returned no results.", flush=True)
         return None
 
-    # Take the first result because only one frame was passed in.
     result = results[0]
 
-    # Stop if the result contains no keypoints.
     if result.keypoints is None:
+        print("Table model result has no keypoints.", flush=True)
         return None
 
-    # Stop if there are zero detected keypoint sets.
     if len(result.keypoints.xy) == 0:
+        print("Table model detected no keypoint sets.", flush=True)
         return None
 
-    # Extract the keypoint coordinates for the first detected table instance.
+    # Use the first detected table instance.
+    # Later, if multiple tables are detected, we can choose the best one.
     keypoints = result.keypoints.xy[0].cpu().numpy()
 
-    # Return the detected keypoints so they can be stored or averaged later.
+    if not are_table_keypoints_valid(keypoints):
+        print("Detected table keypoints are invalid.", flush=True)
+        return None
+
     return keypoints
 
 
-# Build a table object directly from a list of detected table keypoints.
-def build_table_from_keypoints(table_keypoints):
-    # Stop early if no keypoint sets were collected.
-    if table_keypoints is None or len(table_keypoints) == 0:
-        # Print an error message so it is clear why table creation failed.
-        print("No table keypoints were collected.")
+def are_table_keypoints_valid(keypoints):
+    """
+    Check that the table model returned enough usable corner keypoints.
+
+    Homography only requires four corners.
+    Extra keypoints, such as net points, are allowed but ignored later.
+    """
+
+    if keypoints is None:
+        return False
+
+    if len(keypoints) < TABLE_REQUIRED_KEYPOINT_COUNT:
+        return False
+
+    corner_keypoints = keypoints[:TABLE_REQUIRED_KEYPOINT_COUNT]
+
+    if not np.all(np.isfinite(corner_keypoints)):
+        return False
+
+    return True
+
+
+def get_corner_keypoints_only(keypoints):
+    """
+    Return only the first four table corner keypoints.
+
+    Expected order:
+        0 = bottom-left
+        1 = bottom-right
+        2 = top-right
+        3 = top-left
+    """
+
+    if not are_table_keypoints_valid(keypoints):
         return None
 
-    # Convert the list of keypoint sets into a NumPy array.
-    # The expected shape is (N, 6, 2).
-    kp_array = np.array(table_keypoints, dtype=np.float32)
+    return keypoints[:TABLE_REQUIRED_KEYPOINT_COUNT]
 
-    # Print the shape so you can verify the data structure before averaging.
-    print(f"Keypoint array shape before averaging: {kp_array.shape}")
 
-    # Compute the mean across all detected frames.
-    # This reduces the shape from (N, 6, 2) to (6, 2).
-    mean_table_keypoints = np.mean(kp_array, axis=0)
+# ============================================================
+# Video-level table detection
+# ============================================================
 
-    # Print the averaged keypoints for debugging.
-    print("Mean table keypoints:")
-    print(mean_table_keypoints)
+def collect_table_keypoints_from_video(
+    video_capture,
+    max_frames=TABLE_DETECTION_MAX_FRAMES,
+    frame_step=TABLE_DETECTION_FRAME_STEP,
+    min_successful_frames=TABLE_DETECTION_MIN_SUCCESSFUL_FRAMES,
+):
+    """
+    Scan early video frames and collect table corner keypoints.
 
-    # Make sure there are at least 6 keypoints available.
-    # These are 4 corners and 2 net points.
-    if len(mean_table_keypoints) < 6:
-        # Print an error message so it is clear why table creation failed.
-        print("Not enough keypoints were provided to build the table.")
-        return None
+    This function only collects corner keypoints.
 
-    # Create an empty table object that will be filled with the averaged points.
-    detected_table = table()
+    Args:
+        video_capture:
+            OpenCV VideoCapture object.
+        max_frames:
+            Maximum number of early frames to scan.
+        frame_step:
+            Only run table detection every N frames.
+        min_successful_frames:
+            Minimum number of successful table detections required.
 
-    # Map keypoint 0 to corner 0, which is the bottom-left corner.
-    detected_table.set_corner_xy(
-        0,
-        int(mean_table_keypoints[0][0]),
-        int(mean_table_keypoints[0][1]),
-    )
+    Returns:
+        List of NumPy arrays.
+        Each array has shape (4, 2).
+    """
 
-    # Map keypoint 1 to corner 1, which is the bottom-right corner.
-    detected_table.set_corner_xy(
-        1,
-        int(mean_table_keypoints[1][0]),
-        int(mean_table_keypoints[1][1]),
-    )
+    print("Loading table model...", flush=True)
+    model = load_table_model()
+    print("Table model is ready.", flush=True)
 
-    # Map keypoint 2 to corner 2, which is the top-right corner.
-    detected_table.set_corner_xy(
-        2,
-        int(mean_table_keypoints[2][0]),
-        int(mean_table_keypoints[2][1]),
-    )
+    collected_corner_keypoints = []
+    frame_index = 0
 
-    # Map keypoint 3 to corner 3, which is the top-left corner.
-    detected_table.set_corner_xy(
-        3,
-        int(mean_table_keypoints[3][0]),
-        int(mean_table_keypoints[3][1]),
-    )
+    while frame_index < max_frames:
+        print(f"Reading frame {frame_index}...", flush=True)
 
-    # Map keypoint 4 to net position 0, which is the left net point.
-    detected_table.set_net_position_xy(
-        0,
-        int(mean_table_keypoints[4][0]),
-        int(mean_table_keypoints[4][1]),
-    )
+        frame_read_successfully, frame = video_capture.read()
 
-    # Map keypoint 5 to net position 1, which is the right net point.
-    detected_table.set_net_position_xy(
-        1,
-        int(mean_table_keypoints[5][0]),
-        int(mean_table_keypoints[5][1]),
-    )
+        if not frame_read_successfully:
+            print("Could not read another frame from the video.", flush=True)
+            break
 
-    # Return the finished table object so it can be used for homography.
+        should_analyze_frame = frame_index % frame_step == 0
+
+        if should_analyze_frame:
+            print(f"Running table model on frame {frame_index}...", flush=True)
+
+            keypoints = get_table_keypoints_from_frame(
+                frame=frame,
+                model=model,
+            )
+
+            print(f"Finished table model on frame {frame_index}.", flush=True)
+
+            if keypoints is not None:
+                corner_keypoints = get_corner_keypoints_only(keypoints)
+
+                if corner_keypoints is not None:
+                    collected_corner_keypoints.append(corner_keypoints)
+                    print(f"Table corners detected on frame {frame_index}.", flush=True)
+                else:
+                    print(f"Table detected, but corner extraction failed on frame {frame_index}.", flush=True)
+            else:
+                print(f"No table detected on frame {frame_index}.", flush=True)
+
+        if len(collected_corner_keypoints) >= min_successful_frames:
+            print("Minimum successful table detections reached.", flush=True)
+            break
+
+        frame_index += 1
+
+    if len(collected_corner_keypoints) == 0:
+        print("No table corners were detected in the scanned frames.", flush=True)
+
+    return collected_corner_keypoints
+
+
+def detect_table_from_video(video_capture):
+    """
+    Detect the table from the video and return a table object.
+
+    This function:
+    1. Samples early frames.
+    2. Runs the table model.
+    3. Collects only the four table corners.
+    4. Averages the detected corners.
+    5. Builds a table object.
+
+    Returns:
+        detected_table:
+            table object, or None if detection failed.
+    """
+
+    table_keypoints = collect_table_keypoints_from_video(video_capture)
+
+    detected_table = build_table_from_keypoints(table_keypoints)
+
     return detected_table
 
 
-# Print all keypoints stored inside a table object in a clear format.
+# ============================================================
+# Table object building
+# ============================================================
+
+def build_table_from_keypoints(table_keypoints):
+    """
+    Build a table object from one or more table corner detections.
+
+    Args:
+        table_keypoints:
+            List of NumPy arrays.
+            Expected shape after conversion: (N, 4, 2)
+
+    Returns:
+        table object, or None if the keypoints are invalid.
+    """
+
+    if table_keypoints is None or len(table_keypoints) == 0:
+        print("No table keypoints were provided.", flush=True)
+        return None
+
+    keypoint_array = np.array(table_keypoints, dtype=np.float32)
+
+    print(f"Table keypoint array shape: {keypoint_array.shape}", flush=True)
+
+    if keypoint_array.ndim != 3:
+        print("Table keypoint array should have shape (N, 4, 2).", flush=True)
+        return None
+
+    if keypoint_array.shape[1] < TABLE_REQUIRED_KEYPOINT_COUNT:
+        print("Not enough corner keypoints to build table object.", flush=True)
+        return None
+
+    # Average across successful detections.
+    # Example:
+    #   Input shape:  (N, 4, 2)
+    #   Output shape: (4, 2)
+    mean_keypoints = np.mean(keypoint_array, axis=0)
+
+    if len(mean_keypoints) < TABLE_REQUIRED_KEYPOINT_COUNT:
+        print("Not enough averaged keypoints to build table object.", flush=True)
+        return None
+
+    detected_table = table()
+
+    # Expected keypoint order:
+    # 0 = bottom-left
+    # 1 = bottom-right
+    # 2 = top-right
+    # 3 = top-left
+    #
+    # Net points are not used.
+
+    detected_table.set_corner_xy(
+        0,
+        int(mean_keypoints[0][0]),
+        int(mean_keypoints[0][1]),
+    )
+
+    detected_table.set_corner_xy(
+        1,
+        int(mean_keypoints[1][0]),
+        int(mean_keypoints[1][1]),
+    )
+
+    detected_table.set_corner_xy(
+        2,
+        int(mean_keypoints[2][0]),
+        int(mean_keypoints[2][1]),
+    )
+
+    detected_table.set_corner_xy(
+        3,
+        int(mean_keypoints[3][0]),
+        int(mean_keypoints[3][1]),
+    )
+
+    return detected_table
+
+
+# ============================================================
+# Debug printing
+# ============================================================
+
 def print_table_object_keypoints(detected_table):
-    # Stop early if no table object was provided.
+    """
+    Print the four table corners stored inside a table object.
+    """
+
     if detected_table is None:
-        # Print an error message so it is clear why nothing can be printed.
-        print("No table object was provided.")
+        print("No table object was provided.", flush=True)
         return
 
-    # Print a header so the output is easy to spot in the terminal.
-    print("Table keypoints:")
+    print()
+    print("===========================================")
+    print(" Detected Table Corners")
+    print("===========================================")
 
-    # Print the bottom-left corner coordinates.
     print(
-        f"  Corner 0 (Bottom Left): "
-        f"x = {detected_table.corners[0].x}, y = {detected_table.corners[0].y}"
+        f"Corner 0 - Bottom Left:  "
+        f"x = {detected_table.corners[0].x}, "
+        f"y = {detected_table.corners[0].y}"
     )
 
-    # Print the bottom-right corner coordinates.
     print(
-        f"  Corner 1 (Bottom Right): "
-        f"x = {detected_table.corners[1].x}, y = {detected_table.corners[1].y}"
+        f"Corner 1 - Bottom Right: "
+        f"x = {detected_table.corners[1].x}, "
+        f"y = {detected_table.corners[1].y}"
     )
 
-    # Print the top-right corner coordinates.
     print(
-        f"  Corner 2 (Top Right): "
-        f"x = {detected_table.corners[2].x}, y = {detected_table.corners[2].y}"
+        f"Corner 2 - Top Right:    "
+        f"x = {detected_table.corners[2].x}, "
+        f"y = {detected_table.corners[2].y}"
     )
 
-    # Print the top-left corner coordinates.
     print(
-        f"  Corner 3 (Top Left): "
-        f"x = {detected_table.corners[3].x}, y = {detected_table.corners[3].y}"
+        f"Corner 3 - Top Left:     "
+        f"x = {detected_table.corners[3].x}, "
+        f"y = {detected_table.corners[3].y}"
     )
 
-    # Print the left net point coordinates.
-    print(
-        f"  Net 0 (Left Net): "
-        f"x = {detected_table.net_position[0].x}, y = {detected_table.net_position[0].y}"
-    )
+    print("===========================================")
+    print()
 
-    # Print the right net point coordinates.
-    print(
-        f"  Net 1 (Right Net): "
-        f"x = {detected_table.net_position[1].x}, y = {detected_table.net_position[1].y}"
-    )
+
+def print_raw_keypoints(keypoints):
+    """
+    Print raw model keypoints for debugging.
+    """
+
+    if keypoints is None:
+        print("No raw keypoints to print.", flush=True)
+        return
+
+    print()
+    print("===========================================")
+    print(" Raw Table Model Keypoints")
+    print("===========================================")
+    print(keypoints)
+    print("===========================================")
+    print()
+
+# ============================================================
+# Model cleanup
+# ============================================================
+
+def cleanup_table_model():
+    """
+    Release the cached table model.
+
+    This is useful during direct script testing because YOLO/PyTorch can
+    sometimes keep resources alive after inference.
+    """
+
+    global table_model
+
+    if table_model is not None:
+        print("Cleaning up table model...", flush=True)
+        table_model = None
+
+    try:
+        import gc
+        gc.collect()
+    except Exception:
+        pass
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+    except Exception:
+        pass
+
+    print("Table model cleanup complete.", flush=True)
