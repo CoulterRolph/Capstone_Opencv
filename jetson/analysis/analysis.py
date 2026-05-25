@@ -71,8 +71,12 @@ from table import (
 )
 
 from homography import (
+    build_homography_sample_indices_from_capture,
+    compute_stable_table_homography,
     compute_table_homography,
     print_homography_report,
+    print_homography_sample_indices,
+    seek_video_capture_to_frame,
 )
 
 from ball import (
@@ -752,7 +756,135 @@ def get_heatmap_overlay_output_size(homography_result):
 
     return None
 
+# ============================================================
+# Stable homography integration
+# ============================================================
 
+def detect_table_samples_for_homography(video_capture):
+    """
+    Detect the table from multiple sampled frames.
+
+    This function belongs in analysis.py because it coordinates:
+        - video frame seeking
+        - table detection
+        - collecting multiple table results
+
+    homography.py still only handles:
+        - frame index selection
+        - corner stabilization
+        - homography math
+
+    Returns:
+        detected_tables: list of valid detected table objects
+    """
+
+    if video_capture is None:
+        raise ValueError("Video capture is None. Cannot sample table detections.")
+
+    print()
+    print("===========================================")
+    print(" Sampling Table Detections for Homography")
+    print("===========================================")
+
+    frame_indices = build_homography_sample_indices_from_capture(
+        video_capture,
+    )
+
+    print_homography_sample_indices(
+        frame_indices,
+    )
+
+    detected_tables = []
+
+    for sample_number, frame_index in enumerate(frame_indices, start=1):
+        print()
+        print("-------------------------------------------")
+        print(f" Homography sample {sample_number}/{len(frame_indices)}")
+        print("-------------------------------------------")
+        print(f"Seeking to frame: {frame_index}")
+
+        seek_video_capture_to_frame(
+            video_capture=video_capture,
+            frame_index=frame_index,
+        )
+
+        try:
+            detected_table = detect_table_from_video(
+                video_capture,
+            )
+
+            if detected_table is None:
+                print("No table detected for this sample.")
+                continue
+
+            detected_tables.append(
+                detected_table,
+            )
+
+            print("Table detection accepted for homography sampling.")
+
+        except Exception as error:
+            print("Table detection failed for this sample.")
+            print(f"Reason: {error}")
+
+    print()
+    print("===========================================")
+    print(" Homography Sampling Detection Summary")
+    print("===========================================")
+    print(f"Frames sampled:          {len(frame_indices)}")
+    print(f"Valid table detections:  {len(detected_tables)}")
+    print("===========================================")
+    print()
+
+    return detected_tables
+
+
+def compute_integrated_stable_homography(video_capture):
+    """
+    Compute the homography using multiple table detections.
+
+    If stable multi-frame homography fails but at least one table was detected,
+    this falls back to the old single-detection homography so the pipeline
+    can still run.
+    """
+
+    detected_tables = detect_table_samples_for_homography(
+        video_capture,
+    )
+
+    if len(detected_tables) == 0:
+        raise ValueError(
+            "No valid table detections found. Cannot compute homography."
+        )
+
+    try:
+        homography_result = compute_stable_table_homography(
+            detected_tables,
+        )
+
+        detected_table_for_annotation = detected_tables[0]
+
+        print()
+        print("Stable multi-detection homography computed successfully.")
+
+    except Exception as error:
+        print()
+        print("Warning: Stable multi-detection homography failed.")
+        print(f"Reason: {error}")
+        print("Falling back to single-detection homography.")
+
+        detected_table_for_annotation = detected_tables[0]
+
+        homography_result = compute_table_homography(
+            detected_table_for_annotation,
+        )
+
+    print_homography_report(
+        homography_result,
+    )
+
+    return detected_table_for_annotation, homography_result
+    
 
 # ============================================================
 # Main analysis function
@@ -800,38 +932,18 @@ def run_analysis(video_path=None):
 
         video_capture, video_info = open_and_check_video(selected_video_path)
 
-        # ------------------------------------------------------------
-        # Step 2: Detect table
-        # ------------------------------------------------------------
-
         print()
-        print("===========================================", flush=True)
-        print(" Detecting Table", flush=True)
-        print("===========================================", flush=True)
+        print("===========================================")
+        print(" Detecting Stable Table Homography")
+        print("===========================================")
 
-        detected_table = detect_table_from_video(video_capture)
+        detected_table, homography_result = compute_integrated_stable_homography(
+            video_capture,
+        )
 
-        if detected_table is None:
-            raise RuntimeError(
-                "Table detection failed. Cannot compute homography."
-            )
-
-        print_table_object_keypoints(detected_table)
-
-        # ------------------------------------------------------------
-        # Step 3: Compute homography
-        # ------------------------------------------------------------
-
-        print()
-        print("===========================================", flush=True)
-        print(" Computing Table Homography", flush=True)
-        print("===========================================", flush=True)
-
-        homography_result = compute_table_homography(detected_table)
-
-        validate_homography_result(homography_result)
-
-        print_homography_report(homography_result)
+        print_table_object_keypoints(
+            detected_table,
+        )
 
         # ------------------------------------------------------------
         # Step 4: Reset video before ball processing

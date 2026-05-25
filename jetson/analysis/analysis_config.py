@@ -69,6 +69,59 @@ NET_X_MM = TABLE_LENGTH_MM / 2.0
 
 HOMOGRAPHY_OUTPUT_WIDTH = 1200
 
+# ============================================================
+# Homography sampling settings
+# ============================================================
+
+# Number of frames to sample before computing the final homography.
+#
+# Instead of trusting one frame, the analysis will detect the table
+# on multiple sampled frames, stabilize the corner positions, and then
+# compute one final homography.
+HOMOGRAPHY_SAMPLE_COUNT = 15
+
+# Sample from the first few seconds of the video.
+#
+# Since the camera and table are expected to stay fixed, we do not need
+# to scan the whole video for homography. Sampling early keeps this step
+# faster while still giving multiple table detections.
+HOMOGRAPHY_SAMPLE_START_SECONDS = 5.0
+HOMOGRAPHY_SAMPLE_END_SECONDS = 10.0
+
+# Minimum number of valid table detections required before computing
+# a stable multi-frame homography.
+#
+# If fewer than this many table detections are valid, the homography step
+# should fail instead of producing an unreliable transform.
+HOMOGRAPHY_MIN_VALID_DETECTIONS = 5
+
+# Maximum allowed average corner disagreement after stabilization.
+#
+# This is used as a warning/quality check. If the mean corner error is
+# higher than this value, the homography may still be computed, but the
+# report will mark it as unstable.
+HOMOGRAPHY_MAX_MEAN_CORNER_ERROR_PX = 30.0
+
+# Maximum allowed error for one table detection compared to the median
+# table corners.
+#
+# If one sampled detection is very far from the others, it is treated as
+# an outlier and removed before computing the final stable homography.
+HOMOGRAPHY_MAX_CORNER_ERROR_PX = 80.0
+
+# Minimum valid table area in image pixels.
+#
+# This prevents bad corner sets from being accepted if the detected table
+# polygon is too tiny or collapsed.
+HOMOGRAPHY_MIN_TABLE_AREA_PX = 1000.0
+
+# Enable outlier rejection for sampled table detections.
+#
+# Recommended: True
+# This helps reject one bad table detection without failing the entire
+# homography step.
+HOMOGRAPHY_REJECT_OUTLIERS = True
+
 
 # ============================================================
 # Ball model settings
@@ -98,7 +151,7 @@ BALL_TEST_FRAME_STEP = 1
 
 # For testing, do not process the full video yet.
 # Set this to None later to process the entire video.
-BALL_ANALYSIS_MAX_FRAMES = None
+BALL_ANALYSIS_MAX_FRAMES = 600
 
 # Print progress every N frames during integrated analysis.
 BALL_ANALYSIS_PROGRESS_INTERVAL = 120
