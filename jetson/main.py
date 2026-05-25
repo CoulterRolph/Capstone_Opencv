@@ -14,10 +14,10 @@ from classes.objects import img_point, player, table as table_object
 from imaging import homography, heatmap, table as table_detection, ball, video
 
 # Store the path to the input video file.
-VIDEO_PATH = r"C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\raw_videos\\tcube_20260304_012.mp4"
+VIDEO_PATH = "/workspace/tcubed/project/jetson/record/recordings/tcube_20260304_012.mp4"
 
 # Store the path to the ball detection model.
-BALL_MODEL_PATH = r"C:\\Users\\diplo\\Desktop\\Capstone\\OpenCV\\jetson\\models\\ball_player_detect.pt"
+BALL_MODEL_PATH = "/workspace/tcubed/project/jetson/models/ball_player_detect.pt"
 
 # Store whether the annotated output video should be saved.
 RECORD = False

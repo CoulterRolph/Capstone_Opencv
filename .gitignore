@@ -14,8 +14,11 @@
 
 #ignore the recorded video files
 /jetson/capture/recordings
+<<<<<<< HEAD
 /jetson/review/annotated
 /jetson/review/heatmaps
+=======
+>>>>>>> cap2_week2
 
 # Ignore image files anywhere
 *.jpg
@@ -23,7 +26,10 @@
 *.png
 *.txt
 *.avi
+<<<<<<< HEAD
 *.json
+=======
+>>>>>>> cap2_week2
 
 # But, track requirements.txt
 !requirement.txt
