@@ -98,10 +98,10 @@ BALL_TEST_FRAME_STEP = 1
 
 # For testing, do not process the full video yet.
 # Set this to None later to process the entire video.
-BALL_ANALYSIS_MAX_FRAMES = 120
+BALL_ANALYSIS_MAX_FRAMES = None
 
 # Print progress every N frames during integrated analysis.
-BALL_ANALYSIS_PROGRESS_INTERVAL = 30
+BALL_ANALYSIS_PROGRESS_INTERVAL = 120
 
 # If True, print every active ball detection.
 # This can get very noisy, so keep False for integration testing.
@@ -156,6 +156,67 @@ BOUNCE_USE_BBOX_BOTTOM = True
 # Ignore bounce arming while the ball is still in the launch region, if that
 # field is available from ball.py.
 BOUNCE_IGNORE_LAUNCH_REGION = True
+
+# ============================================================
+# Heatmap settings
+# ============================================================
+
+# Master heatmap toggle.
+HEATMAP_ENABLED = True
+
+# Save standalone heatmap PNG:
+# review/heatmaps/heatmap_[original_file_name].png
+HEATMAP_SAVE_IMAGE = True
+
+# Draw mini top-right heatmap onto the annotated video.
+# This only works if annotation video saving is also enabled.
+HEATMAP_DRAW_ON_ANNOTATED_VIDEO = True
+
+# Heatmap output folder.
+HEATMAP_OUTPUT_DIR = PROJECT_ROOT / "review" / "heatmaps"
+
+# Output naming.
+HEATMAP_IMAGE_PREFIX = "heatmap_"
+HEATMAP_IMAGE_EXTENSION = ".png"
+
+# Print the mapped bounce report when the PNG is generated.
+HEATMAP_PRINT_REPORT = True
+
+# Mini heatmap overlay settings.
+HEATMAP_OVERLAY_HEIGHT = 520
+HEATMAP_OVERLAY_MARGIN = 20
+HEATMAP_OVERLAY_ALPHA = 0.92
+
+# Mini heatmap visual options.
+HEATMAP_OVERLAY_DRAW_DENSITY = True
+HEATMAP_OVERLAY_DRAW_LABELS = True
+
+# ============================================================
+# Annotation settings
+# ============================================================
+
+ANNOTATION_ENABLED = True
+ANNOTATION_SAVE_VIDEO = True
+
+# Keep preview disabled by default.
+# We are saving the annotated video only.
+ANNOTATION_SHOW_PREVIEW = False
+
+ANNOTATION_PRINT_PROGRESS = True
+ANNOTATION_PROGRESS_INTERVAL_FRAMES = 120
+
+ANNOTATED_VIDEO_DIR = PROJECT_ROOT / "review" / "annotated"
+ANNOTATED_VIDEO_PREFIX = "annotate_"
+ANNOTATED_VIDEO_EXTENSION = ".mkv"
+ANNOTATED_VIDEO_CODEC = "MJPG"
+
+ANNOTATION_DRAW_FRAME_INFO = True
+ANNOTATION_DRAW_TABLE = True
+ANNOTATION_DRAW_BALL = True
+ANNOTATION_DRAW_ACTIVE_BALL = True
+ANNOTATION_DRAW_BALL_TRAIL = True
+ANNOTATION_DRAW_BOUNCES = True
+ANNOTATION_DRAW_LAUNCH_REGION = False
 
 
 # ============================================================
