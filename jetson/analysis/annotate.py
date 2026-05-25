@@ -1,15 +1,32 @@
 # analysis/annotate.py
-#
-# Offline video annotation helpers.
-#
-# Important:
-# - This file should NOT run YOLO.
-# - This file should NOT detect bounces.
-# - This file should NOT compute homography.
-# - This file only draws results produced by other modules.
 
-from pathlib import Path
+"""
+Offline video annotation helpers for the table-tennis analysis pipeline.
+
+This file is responsible for:
+- Building annotated video output paths
+- Creating and releasing annotated video writers
+- Drawing table annotations
+- Drawing active ball annotations
+- Drawing ball trails
+- Drawing bounce annotations
+- Drawing optional launch region annotations
+- Drawing frame/timestamp/debug information
+
+Important:
+- This file should NOT run YOLO.
+- This file should NOT detect bounces.
+- This file should NOT compute homography.
+- This file should only draw results produced by other modules.
+"""
+
+
+# ============================================================
+# Imports
+# ============================================================
+
 from collections import deque
+from pathlib import Path
 
 import cv2 as cv
 import numpy as np
@@ -75,6 +92,7 @@ def load_single_frame_from_video(video_path, frame_index=0):
         )
 
     return frame
+
 
 def create_annotated_video_writer(
     output_video_path,
@@ -177,7 +195,14 @@ def draw_point(
         return frame
 
     x, y = point
-    cv.circle(frame, (int(x), int(y)), radius, color, thickness)
+
+    cv.circle(
+        frame,
+        (int(x), int(y)),
+        radius,
+        color,
+        thickness,
+    )
 
     return frame
 
@@ -213,6 +238,7 @@ def draw_box(
     )
 
     return frame
+
 
 def normalize_image_point(point):
     """
@@ -441,13 +467,23 @@ def draw_table_annotations(frame, table_data):
     corners = get_table_corner_points(table_data)
 
     if corners is None:
-        draw_text(frame, "Table: not available", (20, 150), color=(0, 0, 255))
+        draw_text(
+            frame,
+            "Table: not available",
+            (20, 150),
+            color=(0, 0, 255),
+        )
         return frame
 
     corners = np.array(corners, dtype=np.int32)
 
     if corners.shape[0] < 4:
-        draw_text(frame, "Table: invalid corners", (20, 150), color=(0, 0, 255))
+        draw_text(
+            frame,
+            "Table: invalid corners",
+            (20, 150),
+            color=(0, 0, 255),
+        )
         return frame
 
     # Draw outline.
@@ -465,7 +501,13 @@ def draw_table_annotations(frame, table_data):
     for index, point in enumerate(corners[:4]):
         x, y = point
 
-        cv.circle(frame, (int(x), int(y)), 7, (0, 255, 255), -1)
+        cv.circle(
+            frame,
+            (int(x), int(y)),
+            7,
+            (0, 255, 255),
+            -1,
+        )
 
         if index < len(corner_labels):
             draw_text(
@@ -476,13 +518,18 @@ def draw_table_annotations(frame, table_data):
                 color=(0, 255, 255),
             )
 
-    draw_text(frame, "Table: detected", (20, 150), color=(0, 255, 0))
+    draw_text(
+        frame,
+        "Table: detected",
+        (20, 150),
+        color=(0, 255, 0),
+    )
 
     return frame
 
 
 # ============================================================
-# Ball annotation
+# Value extraction helpers
 # ============================================================
 
 def get_value(data, possible_names, default=None):
@@ -508,12 +555,19 @@ def get_value(data, possible_names, default=None):
     return default
 
 
+# ============================================================
+# Ball annotation
+# ============================================================
+
 def get_ball_center(ball_data):
     """
     Extract ball center from common formats.
     """
 
-    center = get_value(ball_data, ["center", "center_xy", "position", "point"])
+    center = get_value(
+        ball_data,
+        ["center", "center_xy", "position", "point"],
+    )
 
     normalized_center = normalize_image_point(center)
 
@@ -530,7 +584,11 @@ def get_ball_center(ball_data):
 
     if box is not None and len(box) == 4:
         x1, y1, x2, y2 = box
-        return ((float(x1) + float(x2)) / 2, (float(y1) + float(y2)) / 2)
+
+        return (
+            (float(x1) + float(x2)) / 2,
+            (float(y1) + float(y2)) / 2,
+        )
 
     return None
 
@@ -564,11 +622,23 @@ def draw_ball_annotations(frame, ball_data):
     confidence = get_ball_confidence(ball_data)
 
     # Active ball box.
-    draw_box(frame, box, color=(0, 255, 0), thickness=2)
+    draw_box(
+        frame,
+        box,
+        color=(0, 255, 0),
+        thickness=2,
+    )
 
     # Active ball center.
     if center is not None:
-        draw_point(frame, center, radius=6, color=(0, 0, 255), thickness=-1)
+        draw_point(
+            frame,
+            center,
+            radius=6,
+            color=(0, 0, 255),
+            thickness=-1,
+        )
+
         draw_text(
             frame,
             "ACTIVE BALL",
@@ -607,7 +677,12 @@ def update_ball_trail(ball_trail, ball_data, max_trail_length=30):
     center = get_ball_center(ball_data)
 
     if center is not None:
-        ball_trail.append((float(center[0]), float(center[1])))
+        ball_trail.append(
+            (
+                float(center[0]),
+                float(center[1]),
+            )
+        )
 
     return ball_trail
 
@@ -679,14 +754,21 @@ def draw_launch_region(frame, launch_region, alpha=0.20):
 
     x1, y1, x2, y2 = map(int, box)
 
-    # Create a temporary overlay for transparent fill
+    # Create a temporary overlay for transparent fill.
     overlay = frame.copy()
     cv.rectangle(overlay, (x1, y1), (x2, y2), (255, 0, 255), -1)
 
-    # Blend overlay onto frame
-    cv.addWeighted(overlay, alpha, frame, 1.0 - alpha, 0, frame)
+    # Blend overlay onto frame.
+    cv.addWeighted(
+        overlay,
+        alpha,
+        frame,
+        1.0 - alpha,
+        0,
+        frame,
+    )
 
-    # Draw solid outline after blending
+    # Draw solid outline after blending.
     cv.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
 
     draw_text(
@@ -767,10 +849,22 @@ def draw_bounce_annotations(frame, bounce_events):
         x, y = position
 
         # Outer marker.
-        cv.circle(frame, (int(x), int(y)), 16, (0, 165, 255), 3)
+        cv.circle(
+            frame,
+            (int(x), int(y)),
+            16,
+            (0, 165, 255),
+            3,
+        )
 
         # Inner marker.
-        cv.circle(frame, (int(x), int(y)), 4, (0, 165, 255), -1)
+        cv.circle(
+            frame,
+            (int(x), int(y)),
+            4,
+            (0, 165, 255),
+            -1,
+        )
 
         label = f"Bounce {index}"
 
@@ -792,6 +886,26 @@ def draw_bounce_annotations(frame, bounce_events):
         )
 
     return frame
+
+
+# ============================================================
+# Safe wrapper helpers
+# ============================================================
+
+def draw_launch_region_annotation_safe(frame, launch_region):
+    """
+    Wrapper so annotate_frame stays readable.
+    """
+
+    return draw_launch_region(frame, launch_region)
+
+
+def draw_ball_trail_annotation_safe(frame, ball_trail):
+    """
+    Wrapper so annotate_frame stays readable.
+    """
+
+    return draw_ball_trail(frame, ball_trail)
 
 
 # ============================================================
@@ -826,7 +940,10 @@ def annotate_frame(
     active_ball_found = active_ball_data is not None
 
     if draw_table:
-        annotated_frame = draw_table_annotations(annotated_frame, table_data)
+        annotated_frame = draw_table_annotations(
+            annotated_frame,
+            table_data,
+        )
 
     if draw_launch_region:
         annotated_frame = draw_launch_region_annotation_safe(
@@ -866,22 +983,6 @@ def annotate_frame(
     return annotated_frame
 
 
-def draw_launch_region_annotation_safe(frame, launch_region):
-    """
-    Wrapper so annotate_frame stays readable.
-    """
-
-    return draw_launch_region(frame, launch_region)
-
-
-def draw_ball_trail_annotation_safe(frame, ball_trail):
-    """
-    Wrapper so annotate_frame stays readable.
-    """
-
-    return draw_ball_trail(frame, ball_trail)
-
-
 # ============================================================
 # Standalone test
 # ============================================================
@@ -891,14 +992,14 @@ def test_annotate_single_frame():
     Simple direct test for annotate.py.
 
     This does not require YOLO.
-    It creates a fake frame and draws fake table/ball/bounce data.
+    It loads one real frame and draws fake table/ball/bounce data.
     """
 
-    print("\n===========================================")
+    print()
+    print("===========================================")
     print(" Running annotate.py Single Frame Test")
-    print("===========================================\n")
-
-    video_path = Path(__file__).resolve().parent.parent / "capture" / "recordings" / "sample_001.mkv"
+    print("===========================================")
+    print()
 
     frame_index = 56
     fps = 30.0
@@ -910,7 +1011,10 @@ def test_annotate_single_frame():
         / "sample_001.mkv"
     )
 
-    fake_frame = load_single_frame_from_video(video_path, frame_index=frame_index)
+    fake_frame = load_single_frame_from_video(
+        video_path,
+        frame_index=frame_index,
+    )
 
     frame_height, frame_width = fake_frame.shape[:2]
 
@@ -961,7 +1065,12 @@ def test_annotate_single_frame():
         launch_region=fake_launch_region,
     )
 
-    output_path = Path(__file__).resolve().parent.parent / "review" / "annotated"
+    output_path = (
+        Path(__file__).resolve().parent.parent
+        / "review"
+        / "annotated"
+    )
+
     output_path.mkdir(parents=True, exist_ok=True)
 
     image_output_path = output_path / "annotate_test_frame.jpg"
@@ -972,15 +1081,21 @@ def test_annotate_single_frame():
         print("Failed to save annotation test frame.")
         return False
 
-    print(f"Saved annotation test frame:")
+    print("Saved annotation test frame:")
     print(f"{image_output_path}")
 
-    print("\n===========================================")
+    print()
+    print("===========================================")
     print(" annotate.py Single Frame Test Passed")
-    print("===========================================\n")
+    print("===========================================")
+    print()
 
     return True
 
+
+# ============================================================
+# Direct execution
+# ============================================================
 
 if __name__ == "__main__":
     test_annotate_single_frame()

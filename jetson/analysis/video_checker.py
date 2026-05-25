@@ -1,16 +1,38 @@
 # analysis/video_checker.py
 
+"""
+Video checking helpers for the table-tennis analysis pipeline.
+
+This file is responsible for:
+- Resolving which video path should be analyzed
+- Checking that the video file exists
+- Opening the video with OpenCV
+- Reading video metadata
+- Validating basic video metadata
+- Confirming the first frame is readable
+- Resetting the video back to frame 0
+"""
+
+
+# ============================================================
+# Imports
+# ============================================================
+
 from pathlib import Path
 
 import cv2 as cv
 
+
+# ============================================================
+# Path helpers
+# ============================================================
 
 def resolve_video_path(video_path, default_video_path):
     """
     Decide which video file should be analyzed.
 
     If video_path is provided, use that selected video.
-    Otherwise, use the default recording path from config.py.
+    Otherwise, use the default recording path from analysis_config.py.
     """
 
     if video_path is None:
@@ -32,6 +54,10 @@ def check_video_file_exists(video_path):
     if not video_path.is_file():
         raise FileNotFoundError(f"Path exists, but it is not a file: {video_path}")
 
+
+# ============================================================
+# Video opening and metadata
+# ============================================================
 
 def open_video_capture(video_path):
     """
@@ -99,6 +125,10 @@ def validate_video_info(video_info):
     return warnings
 
 
+# ============================================================
+# Frame readability and seeking
+# ============================================================
+
 def check_first_frame_readable(video_capture):
     """
     Try to read the first frame.
@@ -110,7 +140,9 @@ def check_first_frame_readable(video_capture):
     frame_read_successfully, frame = video_capture.read()
 
     if not frame_read_successfully:
-        raise RuntimeError("OpenCV opened the video, but could not read the first frame.")
+        raise RuntimeError(
+            "OpenCV opened the video, but could not read the first frame."
+        )
 
     if frame is None:
         raise RuntimeError("First frame was read, but the frame is None.")
@@ -125,6 +157,10 @@ def reset_video_to_start(video_capture):
 
     video_capture.set(cv.CAP_PROP_POS_FRAMES, 0)
 
+
+# ============================================================
+# Reporting
+# ============================================================
 
 def print_video_report(video_path, video_info, warnings):
     """
@@ -145,8 +181,10 @@ def print_video_report(video_path, video_info, warnings):
     if warnings:
         print()
         print("Warnings:")
+
         for warning in warnings:
             print(f"- {warning}")
+
     else:
         print()
         print("Warnings: None")
@@ -155,21 +193,29 @@ def print_video_report(video_path, video_info, warnings):
     print()
 
 
+# ============================================================
+# Main video check function
+# ============================================================
+
 def open_and_check_video(video_path):
     """
     Full video checking function.
 
     Steps:
-    1. Check file exists
-    2. Open video with OpenCV
-    3. Read metadata
-    4. Validate metadata
-    5. Read the first frame
-    6. Reset video to frame 0
+    1. Check file exists.
+    2. Open video with OpenCV.
+    3. Read metadata.
+    4. Validate metadata.
+    5. Read the first frame.
+    6. Reset video to frame 0.
 
     Returns:
-        video_capture
-        video_info
+        video_capture:
+            OpenCV VideoCapture object.
+
+        video_info:
+            Dictionary containing width, height, FPS, frame count,
+            and duration seconds.
     """
 
     video_path = Path(video_path)

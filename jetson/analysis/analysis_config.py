@@ -1,5 +1,15 @@
 # analysis/analysis_config.py
 
+"""
+Configuration values for the table-tennis analysis pipeline.
+
+This file stores shared paths, model settings, analysis settings,
+visual output settings, and export settings.
+
+Do not place processing logic in this file.
+Only constants and configuration values should live here.
+"""
+
 from pathlib import Path
 
 
@@ -69,6 +79,7 @@ NET_X_MM = TABLE_LENGTH_MM / 2.0
 
 HOMOGRAPHY_OUTPUT_WIDTH = 1200
 
+
 # ============================================================
 # Homography sampling settings
 # ============================================================
@@ -80,11 +91,11 @@ HOMOGRAPHY_OUTPUT_WIDTH = 1200
 # compute one final homography.
 HOMOGRAPHY_SAMPLE_COUNT = 15
 
-# Sample from the first few seconds of the video.
+# Sample from a selected time range of the video.
 #
 # Since the camera and table are expected to stay fixed, we do not need
-# to scan the whole video for homography. Sampling early keeps this step
-# faster while still giving multiple table detections.
+# to scan the whole video for homography. Sampling a short window keeps
+# this step faster while still giving multiple table detections.
 HOMOGRAPHY_SAMPLE_START_SECONDS = 5.0
 HOMOGRAPHY_SAMPLE_END_SECONDS = 10.0
 
@@ -140,7 +151,7 @@ PLAYER_CLASS_ID = 1
 # How many recent ball positions to keep for bounce detection.
 BALL_TRACKING_HISTORY_SIZE = 12
 
-# Direct test settings for ball.py
+# Direct test settings for ball.py.
 BALL_TEST_MAX_FRAMES = 60
 BALL_TEST_FRAME_STEP = 1
 
@@ -210,6 +221,7 @@ BOUNCE_USE_BBOX_BOTTOM = True
 # field is available from ball.py.
 BOUNCE_IGNORE_LAUNCH_REGION = True
 
+
 # ============================================================
 # Heatmap settings
 # ============================================================
@@ -243,6 +255,7 @@ HEATMAP_OVERLAY_ALPHA = 0.92
 # Mini heatmap visual options.
 HEATMAP_OVERLAY_DRAW_DENSITY = True
 HEATMAP_OVERLAY_DRAW_LABELS = True
+
 
 # ============================================================
 # Annotation settings

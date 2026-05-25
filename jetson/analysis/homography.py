@@ -22,6 +22,7 @@ Instead:
     3. Compute one final homography from the stabilized corners.
 """
 
+
 # ============================================================
 # Imports
 # ============================================================
@@ -211,6 +212,7 @@ def read_frame_at_index(video_capture, frame_index):
 
     return frame
 
+
 def seek_video_capture_to_frame(video_capture, frame_index):
     """
     Move the video capture to a specific frame index.
@@ -230,6 +232,7 @@ def seek_video_capture_to_frame(video_capture, frame_index):
         frame_index,
     )
 
+
 # ============================================================
 # Point and corner conversion helpers
 # ============================================================
@@ -244,6 +247,7 @@ def extract_xy_from_point(point):
         - object.img_point
         - dict with x/y
         - dict with image_x/image_y
+        - dict with img_point
         - tuple/list/numpy array containing [x, y]
     """
 
@@ -629,7 +633,7 @@ def compute_stable_table_homography(
     """
     Compute one stable homography from multiple detected table objects.
 
-    This is the main new function for your improved homography step.
+    This is the main function for the improved homography step.
 
     Expected input:
         detected_tables = list of detected table objects
@@ -1203,8 +1207,9 @@ def print_homography_sample_indices(frame_indices):
     print("===========================================")
     print()
 
+
 # ============================================================
-# Direct tests
+# Direct test classes
 # ============================================================
 
 class FakeCorner:
@@ -1245,6 +1250,10 @@ class FakeDetectedTable:
         ]
 
 
+# ============================================================
+# Direct test data
+# ============================================================
+
 def create_fake_detected_table(offset_x=0.0, offset_y=0.0):
     """
     Create one fake detected table.
@@ -1276,6 +1285,10 @@ def create_fake_outlier_table():
         top_left=(400.0, 200.0),
     )
 
+
+# ============================================================
+# Direct tests
+# ============================================================
 
 def test_homography_sample_indices():
     """
@@ -1523,6 +1536,10 @@ def test_homography_module():
     print("===========================================")
     print()
 
+
+# ============================================================
+# Direct file execution
+# ============================================================
 
 if __name__ == "__main__":
     test_homography_module()

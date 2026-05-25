@@ -5,15 +5,16 @@ Main analysis runner for the table-tennis CV pipeline.
 
 Current integration stage:
 - Open and check video
-- Detect table corners
-- Compute table homography
+- Detect stable table homography
 - Reset video to frame 0
 - Detect and track the ball frame-by-frame
+- Detect bounces
+- Optionally save annotated video
+- Optionally generate heatmap output
 
 Later integration steps:
-- Bounce detection
-- Mapping bounce locations using homography
 - JSON export with ball/bounce metrics
+- Review/feedback generation
 """
 
 
@@ -23,6 +24,7 @@ Later integration steps:
 
 import os
 import sys
+from collections import deque
 from pathlib import Path
 
 
@@ -41,23 +43,130 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 # ============================================================
-# Local analysis imports
+# Import analysis configuration
 # ============================================================
 
-from analysis_config import DEFAULT_RECORDING_PATH
-
 try:
-    from analysis_config import (
-        BALL_ANALYSIS_MAX_FRAMES,
-        BALL_ANALYSIS_PROGRESS_INTERVAL,
-        BALL_ANALYSIS_PRINT_DETECTIONS,
-    )
-except ImportError:
-    # Safe defaults if these settings have not been added yet.
-    BALL_ANALYSIS_MAX_FRAMES = 120
-    BALL_ANALYSIS_PROGRESS_INTERVAL = 30
-    BALL_ANALYSIS_PRINT_DETECTIONS = False
+    import analysis_config
+except ModuleNotFoundError:
+    from analysis import analysis_config
 
+
+DEFAULT_RECORDING_PATH = analysis_config.DEFAULT_RECORDING_PATH
+
+BALL_ANALYSIS_MAX_FRAMES = getattr(
+    analysis_config,
+    "BALL_ANALYSIS_MAX_FRAMES",
+    120,
+)
+
+BALL_ANALYSIS_PROGRESS_INTERVAL = getattr(
+    analysis_config,
+    "BALL_ANALYSIS_PROGRESS_INTERVAL",
+    30,
+)
+
+BALL_ANALYSIS_PRINT_DETECTIONS = getattr(
+    analysis_config,
+    "BALL_ANALYSIS_PRINT_DETECTIONS",
+    False,
+)
+
+ANNOTATION_ENABLED = analysis_config.ANNOTATION_ENABLED
+ANNOTATION_SAVE_VIDEO = analysis_config.ANNOTATION_SAVE_VIDEO
+ANNOTATION_SHOW_PREVIEW = analysis_config.ANNOTATION_SHOW_PREVIEW
+ANNOTATION_PRINT_PROGRESS = analysis_config.ANNOTATION_PRINT_PROGRESS
+ANNOTATION_PROGRESS_INTERVAL_FRAMES = analysis_config.ANNOTATION_PROGRESS_INTERVAL_FRAMES
+
+ANNOTATED_VIDEO_DIR = analysis_config.ANNOTATED_VIDEO_DIR
+ANNOTATED_VIDEO_PREFIX = analysis_config.ANNOTATED_VIDEO_PREFIX
+ANNOTATED_VIDEO_EXTENSION = analysis_config.ANNOTATED_VIDEO_EXTENSION
+ANNOTATED_VIDEO_CODEC = analysis_config.ANNOTATED_VIDEO_CODEC
+
+ANNOTATION_DRAW_FRAME_INFO = analysis_config.ANNOTATION_DRAW_FRAME_INFO
+ANNOTATION_DRAW_TABLE = analysis_config.ANNOTATION_DRAW_TABLE
+ANNOTATION_DRAW_BALL = analysis_config.ANNOTATION_DRAW_BALL
+ANNOTATION_DRAW_ACTIVE_BALL = analysis_config.ANNOTATION_DRAW_ACTIVE_BALL
+ANNOTATION_DRAW_BALL_TRAIL = analysis_config.ANNOTATION_DRAW_BALL_TRAIL
+ANNOTATION_DRAW_BOUNCES = analysis_config.ANNOTATION_DRAW_BOUNCES
+ANNOTATION_DRAW_LAUNCH_REGION = analysis_config.ANNOTATION_DRAW_LAUNCH_REGION
+
+HEATMAP_ENABLED = getattr(
+    analysis_config,
+    "HEATMAP_ENABLED",
+    False,
+)
+
+HEATMAP_SAVE_IMAGE = getattr(
+    analysis_config,
+    "HEATMAP_SAVE_IMAGE",
+    False,
+)
+
+HEATMAP_DRAW_ON_ANNOTATED_VIDEO = getattr(
+    analysis_config,
+    "HEATMAP_DRAW_ON_ANNOTATED_VIDEO",
+    False,
+)
+
+HEATMAP_OUTPUT_DIR = getattr(
+    analysis_config,
+    "HEATMAP_OUTPUT_DIR",
+    PROJECT_ROOT / "review" / "heatmaps",
+)
+
+HEATMAP_IMAGE_PREFIX = getattr(
+    analysis_config,
+    "HEATMAP_IMAGE_PREFIX",
+    "heatmap_",
+)
+
+HEATMAP_IMAGE_EXTENSION = getattr(
+    analysis_config,
+    "HEATMAP_IMAGE_EXTENSION",
+    ".png",
+)
+
+HEATMAP_PRINT_REPORT = getattr(
+    analysis_config,
+    "HEATMAP_PRINT_REPORT",
+    True,
+)
+
+HEATMAP_OVERLAY_HEIGHT = getattr(
+    analysis_config,
+    "HEATMAP_OVERLAY_HEIGHT",
+    520,
+)
+
+HEATMAP_OVERLAY_MARGIN = getattr(
+    analysis_config,
+    "HEATMAP_OVERLAY_MARGIN",
+    20,
+)
+
+HEATMAP_OVERLAY_ALPHA = getattr(
+    analysis_config,
+    "HEATMAP_OVERLAY_ALPHA",
+    0.92,
+)
+
+HEATMAP_OVERLAY_DRAW_DENSITY = getattr(
+    analysis_config,
+    "HEATMAP_OVERLAY_DRAW_DENSITY",
+    True,
+)
+
+HEATMAP_OVERLAY_DRAW_LABELS = getattr(
+    analysis_config,
+    "HEATMAP_OVERLAY_DRAW_LABELS",
+    True,
+)
+
+
+# ============================================================
+# Local analysis imports
+# ============================================================
 
 from video_checker import (
     resolve_video_path,
@@ -96,27 +205,6 @@ from bounce import (
     get_bounce_summary,
 )
 
-from collections import deque
-
-from analysis_config import (
-    ANNOTATION_ENABLED,
-    ANNOTATION_SAVE_VIDEO,
-    ANNOTATION_SHOW_PREVIEW,
-    ANNOTATION_PRINT_PROGRESS,
-    ANNOTATION_PROGRESS_INTERVAL_FRAMES,
-    ANNOTATED_VIDEO_DIR,
-    ANNOTATED_VIDEO_PREFIX,
-    ANNOTATED_VIDEO_EXTENSION,
-    ANNOTATED_VIDEO_CODEC,
-    ANNOTATION_DRAW_FRAME_INFO,
-    ANNOTATION_DRAW_TABLE,
-    ANNOTATION_DRAW_BALL,
-    ANNOTATION_DRAW_ACTIVE_BALL,
-    ANNOTATION_DRAW_BALL_TRAIL,
-    ANNOTATION_DRAW_BOUNCES,
-    ANNOTATION_DRAW_LAUNCH_REGION,
-)
-
 from annotate import (
     build_annotated_video_path,
     create_annotated_video_writer,
@@ -125,35 +213,10 @@ from annotate import (
     update_ball_trail,
 )
 
-try:
-    from analysis_config import (
-        HEATMAP_ENABLED,
-        HEATMAP_SAVE_IMAGE,
-        HEATMAP_DRAW_ON_ANNOTATED_VIDEO,
-        HEATMAP_OUTPUT_DIR,
-        HEATMAP_IMAGE_PREFIX,
-        HEATMAP_IMAGE_EXTENSION,
-        HEATMAP_PRINT_REPORT,
-        HEATMAP_OVERLAY_HEIGHT,
-        HEATMAP_OVERLAY_MARGIN,
-        HEATMAP_OVERLAY_ALPHA,
-        HEATMAP_OVERLAY_DRAW_DENSITY,
-        HEATMAP_OVERLAY_DRAW_LABELS,
-    )
-except ImportError:
-    # Safe defaults if heatmap config values have not been added yet.
-    HEATMAP_ENABLED = False
-    HEATMAP_SAVE_IMAGE = False
-    HEATMAP_DRAW_ON_ANNOTATED_VIDEO = False
-    HEATMAP_OUTPUT_DIR = PROJECT_ROOT / "review" / "heatmaps"
-    HEATMAP_IMAGE_PREFIX = "heatmap_"
-    HEATMAP_IMAGE_EXTENSION = ".png"
-    HEATMAP_PRINT_REPORT = True
-    HEATMAP_OVERLAY_HEIGHT = 520
-    HEATMAP_OVERLAY_MARGIN = 20
-    HEATMAP_OVERLAY_ALPHA = 0.92
-    HEATMAP_OVERLAY_DRAW_DENSITY = True
-    HEATMAP_OVERLAY_DRAW_LABELS = True
+
+# ============================================================
+# Optional heatmap imports
+# ============================================================
 
 try:
     from heatmap import (
@@ -756,6 +819,7 @@ def get_heatmap_overlay_output_size(homography_result):
 
     return None
 
+
 # ============================================================
 # Stable homography integration
 # ============================================================
@@ -765,17 +829,19 @@ def detect_table_samples_for_homography(video_capture):
     Detect the table from multiple sampled frames.
 
     This function belongs in analysis.py because it coordinates:
-        - video frame seeking
-        - table detection
+        - homography sample frame selection
+        - table detection calls
         - collecting multiple table results
 
-    homography.py still only handles:
+    homography.py handles:
         - frame index selection
+        - video seeking helper
         - corner stabilization
         - homography math
 
     Returns:
-        detected_tables: list of valid detected table objects
+        detected_tables:
+            List of valid detected table objects.
     """
 
     if video_capture is None:
@@ -857,12 +923,12 @@ def compute_integrated_stable_homography(video_capture):
             "No valid table detections found. Cannot compute homography."
         )
 
+    detected_table_for_annotation = detected_tables[0]
+
     try:
         homography_result = compute_stable_table_homography(
             detected_tables,
         )
-
-        detected_table_for_annotation = detected_tables[0]
 
         print()
         print("Stable multi-detection homography computed successfully.")
@@ -873,8 +939,6 @@ def compute_integrated_stable_homography(video_capture):
         print(f"Reason: {error}")
         print("Falling back to single-detection homography.")
 
-        detected_table_for_annotation = detected_tables[0]
-
         homography_result = compute_table_homography(
             detected_table_for_annotation,
         )
@@ -884,7 +948,7 @@ def compute_integrated_stable_homography(video_capture):
     )
 
     return detected_table_for_annotation, homography_result
-    
+
 
 # ============================================================
 # Main analysis function
@@ -909,7 +973,7 @@ def run_analysis(video_path=None):
     Returns:
         analysis_result:
             Dictionary containing video info, table info, homography info,
-            and ball tracking summary.
+            ball tracking summary, bounce tracking summary, and optional heatmap.
     """
 
     selected_video_path = resolve_video_path(
@@ -932,6 +996,10 @@ def run_analysis(video_path=None):
 
         video_capture, video_info = open_and_check_video(selected_video_path)
 
+        # ------------------------------------------------------------
+        # Step 2: Detect stable table homography
+        # ------------------------------------------------------------
+
         print()
         print("===========================================")
         print(" Detecting Stable Table Homography")
@@ -946,7 +1014,7 @@ def run_analysis(video_path=None):
         )
 
         # ------------------------------------------------------------
-        # Step 4: Reset video before ball processing
+        # Step 3: Reset video before ball processing
         # ------------------------------------------------------------
         #
         # Table detection consumes one or more frames.
@@ -955,7 +1023,7 @@ def run_analysis(video_path=None):
         reset_video_to_start(video_capture)
 
         # ------------------------------------------------------------
-        # Step 5: Run ball analysis
+        # Step 4: Run ball and bounce analysis
         # ------------------------------------------------------------
 
         print()
@@ -973,7 +1041,7 @@ def run_analysis(video_path=None):
         )
 
         # ------------------------------------------------------------
-        # Step 6: Package current results
+        # Step 5: Package current results
         # ------------------------------------------------------------
 
         analysis_result = {
@@ -1018,7 +1086,7 @@ def run_analysis(video_path=None):
 
 
 # ============================================================
-# Ball processing
+# Ball and bounce processing
 # ============================================================
 
 def process_ball_and_bounce_tracking_for_video(
@@ -1035,10 +1103,10 @@ def process_ball_and_bounce_tracking_for_video(
     generate heatmap outputs.
 
     Heatmap toggles are controlled by analysis_config.py:
-        HEATMAP_SAVE_IMAGE
+        HEATMAP_SAVE_IMAGE:
             Save standalone heatmap PNG.
 
-        HEATMAP_DRAW_ON_ANNOTATED_VIDEO
+        HEATMAP_DRAW_ON_ANNOTATED_VIDEO:
             Draw mini top-right heatmap on the annotated video.
 
     Args:
@@ -1085,6 +1153,7 @@ def process_ball_and_bounce_tracking_for_video(
     ball_trail = deque(maxlen=30)
 
     heatmap_state = setup_heatmap_state_if_needed()
+
     heatmap_overlay_output_size = get_heatmap_overlay_output_size(
         homography_result=homography_result,
     )
@@ -1147,7 +1216,7 @@ def process_ball_and_bounce_tracking_for_video(
                 )
 
             # ------------------------------------------------------------
-            # Annotation / Heatmap video overlay
+            # Annotation / heatmap video overlay
             # ------------------------------------------------------------
             #
             # annotate.py draws normal frame overlays.
@@ -1163,7 +1232,7 @@ def process_ball_and_bounce_tracking_for_video(
             )
 
             annotation_bounce_events = normalize_bounce_events_for_annotation(
-                bounce_state["bounce_events"]
+                bounce_state["bounce_events"],
             )
 
             write_annotated_frame_if_enabled(
@@ -1228,6 +1297,7 @@ def process_ball_and_bounce_tracking_for_video(
 
     return ball_tracking_result, bounce_tracking_result
 
+
 def process_latest_active_position_for_bounce(
     tracker_state,
     ball_detection,
@@ -1274,6 +1344,7 @@ def process_latest_active_position_for_bounce(
     )
 
     return bounce_event
+
 
 def should_stop_ball_analysis(frames_analyzed, max_frames):
     """

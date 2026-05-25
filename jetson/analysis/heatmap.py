@@ -1,18 +1,26 @@
 # analysis/heatmap.py
-#
-# Standalone heatmap generation module.
-#
-# Task 1:
-# - Take bounce points from bounce.py
-# - Take homography result from homography.py
-# - Map bounces from image coordinates into top-down table coordinates
-# - Save a standalone heatmap image
-#
-# Important:
-# - This file should NOT run YOLO.
-# - This file should NOT detect bounces.
-# - This file should NOT annotate video frames.
-# - This file only maps and visualizes bounce locations.
+
+"""
+Standalone heatmap generation module.
+
+This file is responsible for:
+- Taking bounce points from bounce.py
+- Taking homography results from homography.py
+- Mapping bounces from image coordinates into top-down table coordinates
+- Saving a standalone heatmap image
+- Drawing an optional mini heatmap overlay on annotated video frames
+
+Important:
+- This file should NOT run YOLO.
+- This file should NOT detect bounces.
+- This file should NOT annotate full video frames by itself.
+- This file only maps and visualizes bounce locations.
+"""
+
+
+# ============================================================
+# Imports
+# ============================================================
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +47,7 @@ PROJECT_ROOT = ANALYSIS_DIR.parent
 
 DEFAULT_HEATMAP_OUTPUT_DIR = PROJECT_ROOT / "review" / "heatmaps"
 DEFAULT_HEATMAP_FILENAME = "heatmap_test.png"
+
 
 def build_heatmap_output_path(
     original_video_path,
@@ -280,7 +289,10 @@ def get_homography_matrix(homography_result):
     return None
 
 
-def get_homography_output_size(homography_result, fallback_output_size=(1200, 668)):
+def get_homography_output_size(
+    homography_result,
+    fallback_output_size=(1200, 668),
+):
     """
     Extract the homography output size.
 
@@ -373,6 +385,7 @@ def table_pixels_to_real_mm(table_pixel_point, output_size):
     y_mm = (y_pixel / (height - 1)) * TABLE_WIDTH_MM
 
     return (float(x_mm), float(y_mm))
+
 
 def map_table_pixel_point_to_portrait_display(
     table_pixel_point,
@@ -675,6 +688,7 @@ def create_density_layer(mapped_bounce_points, output_size, radius=35):
 
     return density
 
+
 def create_portrait_density_layer(
     mapped_bounce_points,
     homography_output_size,
@@ -839,6 +853,7 @@ def draw_bounce_points(
 
     return table_image
 
+
 def draw_heatmap_summary(table_image, state):
     """
     Draw a small summary in the bottom-left corner.
@@ -884,6 +899,7 @@ def generate_heatmap_image(state, output_size, portrait_display=True):
     # ------------------------------------------------------------
     # Portrait display path
     # ------------------------------------------------------------
+
     if portrait_display:
         source_width, source_height = homography_output_size
 
@@ -953,6 +969,7 @@ def generate_heatmap_image(state, output_size, portrait_display=True):
     )
 
     return table_image
+
 
 def save_heatmap_image(heatmap_image, output_path):
     """
@@ -1058,6 +1075,7 @@ def print_heatmap_report(state):
     print("===========================================", flush=True)
     print()
 
+
 # ============================================================
 # Mini heatmap overlay helpers
 # ============================================================
@@ -1158,6 +1176,41 @@ def draw_mini_table_layout(mini_table):
     return mini_table
 
 
+def map_table_point_to_mini_portrait(
+    table_pixel_point,
+    homography_output_size,
+    overlay_width,
+    overlay_height,
+):
+    """
+    Convert a homography table point into mini portrait coordinates.
+
+    Important:
+    This does NOT rotate the point.
+
+    It keeps:
+        x = left/right position
+        y = near/far position
+
+    Then it rescales into the mini portrait table.
+    """
+
+    if table_pixel_point is None:
+        return None
+
+    source_width, source_height = homography_output_size
+
+    x, y = table_pixel_point
+
+    if source_width <= 1 or source_height <= 1:
+        return None
+
+    mini_x = (x / (source_width - 1)) * (overlay_width - 1)
+    mini_y = (y / (source_height - 1)) * (overlay_height - 1)
+
+    return (int(round(mini_x)), int(round(mini_y)))
+
+
 def create_mini_density_layer(
     mapped_bounce_points,
     homography_output_size,
@@ -1213,40 +1266,6 @@ def create_mini_density_layer(
         density = density / max_value
 
     return density
-    
-def map_table_point_to_mini_portrait(
-    table_pixel_point,
-    homography_output_size,
-    overlay_width,
-    overlay_height,
-):
-    """
-    Convert a homography table point into mini portrait coordinates.
-
-    Important:
-    This does NOT rotate the point.
-
-    It keeps:
-        x = left/right position
-        y = near/far position
-
-    Then it rescales into the mini portrait table.
-    """
-
-    if table_pixel_point is None:
-        return None
-
-    source_width, source_height = homography_output_size
-
-    x, y = table_pixel_point
-
-    if source_width <= 1 or source_height <= 1:
-        return None
-
-    mini_x = (x / (source_width - 1)) * (overlay_width - 1)
-    mini_y = (y / (source_height - 1)) * (overlay_height - 1)
-
-    return (int(round(mini_x)), int(round(mini_y)))
 
 
 def draw_mini_bounce_points(
@@ -1415,7 +1434,7 @@ def draw_mini_heatmap_overlay_on_frame(
 
 
 # ============================================================
-# Direct test
+# Direct tests
 # ============================================================
 
 def test_heatmap_direct():
@@ -1488,6 +1507,7 @@ def test_heatmap_direct():
     print()
 
     return True
+
 
 def test_mini_heatmap_overlay_direct():
     """
@@ -1595,6 +1615,11 @@ def test_mini_heatmap_overlay_direct():
     print()
 
     return True
+
+
+# ============================================================
+# Direct file execution
+# ============================================================
 
 if __name__ == "__main__":
     test_heatmap_direct()

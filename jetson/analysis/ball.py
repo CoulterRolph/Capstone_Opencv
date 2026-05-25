@@ -12,7 +12,7 @@ This file is responsible for:
 
 Important:
 - ball.py does NOT detect bounces.
-- bounce.py will later use the active ball positions and velocities.
+- bounce.py uses the active ball positions and velocities later.
 """
 
 
@@ -20,10 +20,10 @@ Important:
 # Imports
 # ============================================================
 
+import math
 import os
 import sys
 import time
-import math
 from pathlib import Path
 
 from ultralytics import YOLO
@@ -60,33 +60,106 @@ BALL_MODEL_IMGSZ = getattr(analysis_config, "BALL_MODEL_IMGSZ", 640)
 BALL_MODEL_CONFIDENCE = getattr(analysis_config, "BALL_MODEL_CONFIDENCE", 0.25)
 BALL_CLASS_ID = getattr(analysis_config, "BALL_CLASS_ID", 0)
 
-BALL_TRACKING_HISTORY_SIZE = getattr(analysis_config, "BALL_TRACKING_HISTORY_SIZE", 40)
+BALL_TRACKING_HISTORY_SIZE = getattr(
+    analysis_config,
+    "BALL_TRACKING_HISTORY_SIZE",
+    40,
+)
 
 BALL_TEST_MAX_FRAMES = getattr(analysis_config, "BALL_TEST_MAX_FRAMES", 120)
 BALL_TEST_FRAME_STEP = getattr(analysis_config, "BALL_TEST_FRAME_STEP", 1)
 
-BALL_MIN_MOTION_THRESHOLD = getattr(analysis_config, "BALL_MIN_MOTION_THRESHOLD", 5.0)
+BALL_MIN_MOTION_THRESHOLD = getattr(
+    analysis_config,
+    "BALL_MIN_MOTION_THRESHOLD",
+    5.0,
+)
 
-BALL_MATCH_DISTANCE_THRESHOLD = getattr(analysis_config, "BALL_MATCH_DISTANCE_THRESHOLD", 120.0)
+BALL_MATCH_DISTANCE_THRESHOLD = getattr(
+    analysis_config,
+    "BALL_MATCH_DISTANCE_THRESHOLD",
+    120.0,
+)
+
 BALL_MAX_MISSES = getattr(analysis_config, "BALL_MAX_MISSES", 4)
 
-BALL_SWITCH_CONFIRM_FRAMES = getattr(analysis_config, "BALL_SWITCH_CONFIRM_FRAMES", 3)
-BALL_CHALLENGER_SAME_RADIUS = getattr(analysis_config, "BALL_CHALLENGER_SAME_RADIUS", 60.0)
+BALL_SWITCH_CONFIRM_FRAMES = getattr(
+    analysis_config,
+    "BALL_SWITCH_CONFIRM_FRAMES",
+    3,
+)
 
-BALL_LAUNCH_X_MIN_FRAC = getattr(analysis_config, "BALL_LAUNCH_X_MIN_FRAC", 0.25)
-BALL_LAUNCH_X_MAX_FRAC = getattr(analysis_config, "BALL_LAUNCH_X_MAX_FRAC", 0.75)
-BALL_LAUNCH_Y_MAX_FRAC = getattr(analysis_config, "BALL_LAUNCH_Y_MAX_FRAC", 0.45)
+BALL_CHALLENGER_SAME_RADIUS = getattr(
+    analysis_config,
+    "BALL_CHALLENGER_SAME_RADIUS",
+    60.0,
+)
 
-BALL_INIT_REQUIRE_LAUNCH_REGION = getattr(analysis_config, "BALL_INIT_REQUIRE_LAUNCH_REGION", True)
-BALL_INIT_MOTION_WEIGHT = getattr(analysis_config, "BALL_INIT_MOTION_WEIGHT", 1.0)
-BALL_INIT_CONF_WEIGHT = getattr(analysis_config, "BALL_INIT_CONF_WEIGHT", 25.0)
-BALL_INIT_LAUNCH_BONUS = getattr(analysis_config, "BALL_INIT_LAUNCH_BONUS", 40.0)
+BALL_LAUNCH_X_MIN_FRAC = getattr(
+    analysis_config,
+    "BALL_LAUNCH_X_MIN_FRAC",
+    0.25,
+)
 
-BALL_CHALLENGER_MOTION_WEIGHT = getattr(analysis_config, "BALL_CHALLENGER_MOTION_WEIGHT", 1.0)
-BALL_CHALLENGER_CONF_WEIGHT = getattr(analysis_config, "BALL_CHALLENGER_CONF_WEIGHT", 20.0)
-BALL_CHALLENGER_LAUNCH_BONUS = getattr(analysis_config, "BALL_CHALLENGER_LAUNCH_BONUS", 50.0)
+BALL_LAUNCH_X_MAX_FRAC = getattr(
+    analysis_config,
+    "BALL_LAUNCH_X_MAX_FRAC",
+    0.75,
+)
 
-BALL_MAX_TRAIL_POINTS = getattr(analysis_config, "BALL_MAX_TRAIL_POINTS", 40)
+BALL_LAUNCH_Y_MAX_FRAC = getattr(
+    analysis_config,
+    "BALL_LAUNCH_Y_MAX_FRAC",
+    0.45,
+)
+
+BALL_INIT_REQUIRE_LAUNCH_REGION = getattr(
+    analysis_config,
+    "BALL_INIT_REQUIRE_LAUNCH_REGION",
+    True,
+)
+
+BALL_INIT_MOTION_WEIGHT = getattr(
+    analysis_config,
+    "BALL_INIT_MOTION_WEIGHT",
+    1.0,
+)
+
+BALL_INIT_CONF_WEIGHT = getattr(
+    analysis_config,
+    "BALL_INIT_CONF_WEIGHT",
+    25.0,
+)
+
+BALL_INIT_LAUNCH_BONUS = getattr(
+    analysis_config,
+    "BALL_INIT_LAUNCH_BONUS",
+    40.0,
+)
+
+BALL_CHALLENGER_MOTION_WEIGHT = getattr(
+    analysis_config,
+    "BALL_CHALLENGER_MOTION_WEIGHT",
+    1.0,
+)
+
+BALL_CHALLENGER_CONF_WEIGHT = getattr(
+    analysis_config,
+    "BALL_CHALLENGER_CONF_WEIGHT",
+    20.0,
+)
+
+BALL_CHALLENGER_LAUNCH_BONUS = getattr(
+    analysis_config,
+    "BALL_CHALLENGER_LAUNCH_BONUS",
+    50.0,
+)
+
+BALL_MAX_TRAIL_POINTS = getattr(
+    analysis_config,
+    "BALL_MAX_TRAIL_POINTS",
+    40,
+)
 
 
 # ============================================================
@@ -685,7 +758,9 @@ def append_active_position(tracker_state, frame_index, time_seconds):
     tracker_state["positions"].append(position)
 
     if len(tracker_state["positions"]) > tracker_state["history_size"]:
-        tracker_state["positions"] = tracker_state["positions"][-tracker_state["history_size"]:]
+        tracker_state["positions"] = tracker_state["positions"][
+            -tracker_state["history_size"]:
+        ]
 
 
 def append_to_active_trail(tracker_state):
@@ -706,7 +781,9 @@ def append_to_active_trail(tracker_state):
     tracker_state["active_trail"].append(point)
 
     if len(tracker_state["active_trail"]) > BALL_MAX_TRAIL_POINTS:
-        tracker_state["active_trail"] = tracker_state["active_trail"][-BALL_MAX_TRAIL_POINTS:]
+        tracker_state["active_trail"] = tracker_state["active_trail"][
+            -BALL_MAX_TRAIL_POINTS:
+        ]
 
 
 # ============================================================

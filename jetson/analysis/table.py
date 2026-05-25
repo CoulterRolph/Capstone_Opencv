@@ -26,6 +26,7 @@ Expected corner keypoint order:
 # Imports
 # ============================================================
 
+import gc
 import sys
 import time
 from pathlib import Path
@@ -38,36 +39,22 @@ from ultralytics import YOLO
 # Import analysis configuration
 # ============================================================
 
-# This try/except supports both:
-#
-# 1. Module-style execution:
-#    python3 -m analysis.analysis
-#
-# 2. Direct file execution:
-#    python3 analysis/analysis.py
-
 try:
-    from analysis_config import (
-        PROJECT_ROOT,
-        TABLE_MODEL_PATH,
-        TABLE_MODEL_IMGSZ,
-        TABLE_MODEL_CONFIDENCE,
-        TABLE_REQUIRED_KEYPOINT_COUNT,
-        TABLE_DETECTION_MAX_FRAMES,
-        TABLE_DETECTION_FRAME_STEP,
-        TABLE_DETECTION_MIN_SUCCESSFUL_FRAMES,
-    )
+    import analysis_config
 except ModuleNotFoundError:
-    from analysis.analysis_config import (
-        PROJECT_ROOT,
-        TABLE_MODEL_PATH,
-        TABLE_MODEL_IMGSZ,
-        TABLE_MODEL_CONFIDENCE,
-        TABLE_REQUIRED_KEYPOINT_COUNT,
-        TABLE_DETECTION_MAX_FRAMES,
-        TABLE_DETECTION_FRAME_STEP,
-        TABLE_DETECTION_MIN_SUCCESSFUL_FRAMES,
-    )
+    from analysis import analysis_config
+
+
+PROJECT_ROOT = analysis_config.PROJECT_ROOT
+
+TABLE_MODEL_PATH = analysis_config.TABLE_MODEL_PATH
+TABLE_MODEL_IMGSZ = analysis_config.TABLE_MODEL_IMGSZ
+TABLE_MODEL_CONFIDENCE = analysis_config.TABLE_MODEL_CONFIDENCE
+TABLE_REQUIRED_KEYPOINT_COUNT = analysis_config.TABLE_REQUIRED_KEYPOINT_COUNT
+
+TABLE_DETECTION_MAX_FRAMES = analysis_config.TABLE_DETECTION_MAX_FRAMES
+TABLE_DETECTION_FRAME_STEP = analysis_config.TABLE_DETECTION_FRAME_STEP
+TABLE_DETECTION_MIN_SUCCESSFUL_FRAMES = analysis_config.TABLE_DETECTION_MIN_SUCCESSFUL_FRAMES
 
 
 # ============================================================
@@ -150,10 +137,13 @@ def get_table_keypoints_from_frame(
     Args:
         frame:
             OpenCV frame.
+
         model:
             Optional preloaded YOLO model.
+
         imgsz:
             YOLO inference image size.
+
         confidence:
             YOLO confidence threshold.
 
@@ -266,10 +256,13 @@ def collect_table_keypoints_from_video(
     Args:
         video_capture:
             OpenCV VideoCapture object.
+
         max_frames:
             Maximum number of early frames to scan.
+
         frame_step:
             Only run table detection every N frames.
+
         min_successful_frames:
             Minimum number of successful table detections required.
 
@@ -311,9 +304,16 @@ def collect_table_keypoints_from_video(
 
                 if corner_keypoints is not None:
                     collected_corner_keypoints.append(corner_keypoints)
-                    print(f"Table corners detected on frame {frame_index}.", flush=True)
+                    print(
+                        f"Table corners detected on frame {frame_index}.",
+                        flush=True,
+                    )
                 else:
-                    print(f"Table detected, but corner extraction failed on frame {frame_index}.", flush=True)
+                    print(
+                        "Table detected, but corner extraction failed "
+                        f"on frame {frame_index}.",
+                        flush=True,
+                    )
             else:
                 print(f"No table detected on frame {frame_index}.", flush=True)
 
@@ -345,9 +345,13 @@ def detect_table_from_video(video_capture):
             table object, or None if detection failed.
     """
 
-    table_keypoints = collect_table_keypoints_from_video(video_capture)
+    table_keypoints = collect_table_keypoints_from_video(
+        video_capture,
+    )
 
-    detected_table = build_table_from_keypoints(table_keypoints)
+    detected_table = build_table_from_keypoints(
+        table_keypoints,
+    )
 
     return detected_table
 
@@ -453,25 +457,29 @@ def print_table_object_keypoints(detected_table):
     print(
         f"Corner 0 - Bottom Left:  "
         f"x = {detected_table.corners[0].x}, "
-        f"y = {detected_table.corners[0].y}"
+        f"y = {detected_table.corners[0].y}",
+        flush=True,
     )
 
     print(
         f"Corner 1 - Bottom Right: "
         f"x = {detected_table.corners[1].x}, "
-        f"y = {detected_table.corners[1].y}"
+        f"y = {detected_table.corners[1].y}",
+        flush=True,
     )
 
     print(
         f"Corner 2 - Top Right:    "
         f"x = {detected_table.corners[2].x}, "
-        f"y = {detected_table.corners[2].y}"
+        f"y = {detected_table.corners[2].y}",
+        flush=True,
     )
 
     print(
         f"Corner 3 - Top Left:     "
         f"x = {detected_table.corners[3].x}, "
-        f"y = {detected_table.corners[3].y}"
+        f"y = {detected_table.corners[3].y}",
+        flush=True,
     )
 
     print("===========================================")
@@ -495,6 +503,7 @@ def print_raw_keypoints(keypoints):
     print("===========================================")
     print()
 
+
 # ============================================================
 # Model cleanup
 # ============================================================
@@ -514,7 +523,6 @@ def cleanup_table_model():
         table_model = None
 
     try:
-        import gc
         gc.collect()
     except Exception:
         pass

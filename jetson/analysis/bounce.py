@@ -14,6 +14,135 @@ Important:
 - bounce.py does NOT manage active ball / challenger logic.
 - ball.py decides which ball is the active ball.
 - bounce.py only analyzes the active ball motion.
+
+
+============================================================
+Bounce tuning guide
+============================================================
+
+Bounce detection is controlled from analysis_config.py.
+
+Recommended config section:
+
+    # ============================================================
+    # Bounce detection settings
+    # ============================================================
+
+    BOUNCE_VY_DOWN_THRESHOLD = 120.0
+    BOUNCE_VY_UP_THRESHOLD = 120.0
+
+    BOUNCE_COOLDOWN_FRAMES = 6
+    BOUNCE_MIN_TRACK_UPDATES = 3
+
+    BOUNCE_USE_BBOX_BOTTOM = True
+    BOUNCE_IGNORE_LAUNCH_REGION = True
+
+
+What each setting does:
+
+1. BOUNCE_VY_DOWN_THRESHOLD
+
+    Controls how fast the ball must be moving downward before bounce.py
+    becomes "armed".
+
+    In image coordinates:
+        positive vy = moving downward
+
+    Increase this if:
+        - false bounces are being detected
+        - small tracking jitter is arming bounce detection
+
+    Decrease this if:
+        - real bounces are being missed
+        - the ball movement is slower in the video
+
+
+2. BOUNCE_VY_UP_THRESHOLD
+
+    Controls how fast the ball must reverse upward before a bounce is
+    confirmed.
+
+    In image coordinates:
+        negative vy = moving upward
+
+    Increase this if:
+        - false bounces happen after weak upward movement
+        - ball jitter is being mistaken for a bounce
+
+    Decrease this if:
+        - real bounces are missed after softer rebounds
+
+
+3. BOUNCE_COOLDOWN_FRAMES
+
+    Controls how many processed frames must pass after one bounce before
+    another bounce can be detected.
+
+    Increase this if:
+        - one real bounce is being counted multiple times
+
+    Decrease this if:
+        - fast back-to-back bounces are being missed
+
+
+4. BOUNCE_MIN_TRACK_UPDATES
+
+    Controls how long the active track must exist before bounce.py trusts it.
+
+    Increase this if:
+        - bounces are detected immediately after a bad track switch
+        - unstable new tracks cause false bounces
+
+    Decrease this if:
+        - bounces happen soon after the ball first appears
+        - early valid bounces are being ignored
+
+
+5. BOUNCE_USE_BBOX_BOTTOM
+
+    If True:
+        bounce.py uses the bottom of the ball bounding box as the bounce
+        contact y-coordinate when available.
+
+    If False:
+        bounce.py uses the ball center y-coordinate.
+
+    Recommended:
+        True
+
+    Set to False if:
+        - bounding boxes are unstable
+        - bbox bottom jumps around more than the center point
+
+
+6. BOUNCE_IGNORE_LAUNCH_REGION
+
+    If True:
+        bounce.py ignores active ball positions marked by ball.py as being
+        inside the launch region.
+
+    Recommended:
+        True for the current pipeline.
+
+    Set to False if:
+        - the launch region is filtering out valid bounce motion
+        - you are testing bounce.py with synthetic/simple data
+
+
+Suggested tuning order:
+
+    1. Start with defaults.
+    2. If false bounces happen, increase:
+        - BOUNCE_VY_DOWN_THRESHOLD
+        - BOUNCE_VY_UP_THRESHOLD
+        - BOUNCE_COOLDOWN_FRAMES
+    3. If real bounces are missed, decrease:
+        - BOUNCE_VY_DOWN_THRESHOLD
+        - BOUNCE_VY_UP_THRESHOLD
+    4. If bounce detection fails after track switches, increase:
+        - BOUNCE_MIN_TRACK_UPDATES
+    5. If bounce location looks too high above the table, keep:
+        - BOUNCE_USE_BBOX_BOTTOM = True
 """
 
 
@@ -41,7 +170,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 # ============================================================
-# Import configuration
+# Import analysis configuration
 # ============================================================
 
 try:
@@ -328,6 +457,7 @@ def process_active_ball_position(active_position, bounce_state):
 
     if is_strong_downward_motion(current_vy):
         bounce_state["bounce_armed"] = True
+
         update_pending_lowest_point(
             bounce_state=bounce_state,
             active_position=active_position,
