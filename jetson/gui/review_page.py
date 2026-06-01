@@ -73,7 +73,10 @@ class ReviewPage(tk.Frame):
         Create the Review page.
         """
 
-        super().__init__(parent)
+        super().__init__(
+            parent,
+            bg=gui_config.APP_BACKGROUND_COLOR,
+        )
 
         self.page_manager = page_manager
         self.review_controller = ReviewController()
@@ -85,11 +88,14 @@ class ReviewPage(tk.Frame):
         self.heatmap_dropdown = None
         self.refresh_heatmaps_button = None
         self.preview_heatmap_button = None
+        self.back_button = None
         self.preview_label = None
+        self.preview_frame = None
 
         # Keep a reference to the image so Tkinter does not garbage collect it.
         self.preview_image = None
 
+        self._configure_ttk_style()
         self._build_page()
         self._load_heatmap_dropdown()
 
@@ -97,159 +103,188 @@ class ReviewPage(tk.Frame):
     # Page layout
     # --------------------------------------------------------
 
+    def _configure_ttk_style(self):
+        """
+        Configure ttk widget styles used by this page.
+        """
+
+        style = ttk.Style()
+
+        style.configure(
+            "TCubed.TCombobox",
+            font=gui_config.BODY_FONT,
+        )
+
     def _build_page(self):
         """
         Build the Review page layout.
         """
 
-        main_frame = tk.Frame(self)
+        self._build_header_section()
+        self._build_display_section()
+        self._build_bottom_panel_section()
 
-        main_frame.pack(
-            fill="both",
-            expand=True,
-            padx=gui_config.PAGE_PADDING_X,
-            pady=gui_config.PAGE_PADDING_Y,
-        )
-
-        self._build_header_section(
-            parent=main_frame,
-        )
-
-        self._build_status_section(
-            parent=main_frame,
-        )
-
-        self._build_heatmap_selection_section(
-            parent=main_frame,
-        )
-
-        self._build_button_section(
-            parent=main_frame,
-        )
-
-        self._build_preview_section(
-            parent=main_frame,
-        )
-
-    def _build_header_section(self, parent):
+    def _build_header_section(self):
         """
-        Add page title and Back button.
+        Build the top title/subtitle header.
         """
 
-        header_frame = tk.Frame(parent)
+        header_frame = tk.Frame(
+            self,
+            bg=gui_config.APP_BACKGROUND_COLOR,
+        )
 
         header_frame.pack(
             fill="x",
-            pady=(0, 12),
-        )
-
-        back_button = tk.Button(
-            header_frame,
-            text=gui_config.BACK_TO_HOME_BUTTON_TEXT,
-            command=self._on_back_clicked,
-        )
-
-        back_button.pack(
-            side="left",
+            padx=gui_config.HEADER_PAD_X,
+            pady=(
+                gui_config.HEADER_PAD_Y_TOP,
+                gui_config.HEADER_PAD_Y_BOTTOM,
+            ),
         )
 
         title_label = tk.Label(
             header_frame,
             text=gui_config.REVIEW_PAGE_TITLE_TEXT,
-            font=gui_config.TITLE_FONT,
+            font=gui_config.HEADER_TITLE_FONT,
+            bg=gui_config.APP_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
         )
 
         title_label.pack(
-            side="left",
-            padx=20,
+            anchor="w",
         )
 
-    def _build_status_section(self, parent):
+        subtitle_label = tk.Label(
+            header_frame,
+            text=gui_config.REVIEW_PAGE_SUBTITLE_TEXT,
+            font=gui_config.HEADER_SUBTITLE_FONT,
+            bg=gui_config.APP_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_SECONDARY,
+        )
+
+        subtitle_label.pack(
+            anchor="w",
+            pady=(3, 0),
+        )
+
+    def _build_display_section(self):
         """
-        Add status label.
+        Build the main light display area.
         """
 
-        self.status_label = tk.Label(
+        display_frame = tk.Frame(
+            self,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+        )
+
+        display_frame.pack(
+            fill="both",
+            expand=True,
+            padx=gui_config.CARD_PAD_X,
+            pady=(
+                gui_config.CARD_PAD_Y_TOP,
+                gui_config.CARD_PAD_Y_BOTTOM,
+            ),
+        )
+
+        self._build_display_intro(
+            parent=display_frame,
+        )
+
+        self._build_heatmap_selection_section(
+            parent=display_frame,
+        )
+
+        self._build_preview_section(
+            parent=display_frame,
+        )
+
+    def _build_display_intro(self, parent):
+        """
+        Add display title and description.
+        """
+
+        intro_frame = tk.Frame(
             parent,
-            text=gui_config.REVIEW_IDLE_STATUS_TEXT,
-            font=gui_config.SUBTITLE_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
         )
 
-        self.status_label.pack(
-            pady=6,
+        intro_frame.pack(
+            fill="x",
+            padx=30,
+            pady=(28, 12),
+        )
+
+        title_label = tk.Label(
+            intro_frame,
+            text=gui_config.REVIEW_DISPLAY_TITLE_TEXT,
+            font=gui_config.DISPLAY_TITLE_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_PRIMARY,
+        )
+
+        title_label.pack(
+            anchor="w",
+        )
+
+        body_label = tk.Label(
+            intro_frame,
+            text=gui_config.REVIEW_DISPLAY_BODY_TEXT,
+            font=gui_config.DISPLAY_BODY_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_SECONDARY,
+            wraplength=850,
+            justify="left",
+        )
+
+        body_label.pack(
+            anchor="w",
+            pady=(8, 0),
         )
 
     def _build_heatmap_selection_section(self, parent):
         """
-        Add heatmap dropdown and refresh button.
+        Add heatmap dropdown.
         """
 
-        selection_frame = tk.Frame(parent)
+        selection_panel = tk.Frame(
+            parent,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
 
-        selection_frame.pack(
-            pady=8,
+        selection_panel.pack(
+            fill="x",
+            padx=30,
+            pady=(10, 12),
         )
 
         selection_label = tk.Label(
-            selection_frame,
+            selection_panel,
             text=gui_config.REVIEW_HEATMAP_SELECTION_LABEL_TEXT,
-            font=("Arial", 11, "bold"),
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
         )
 
-        selection_label.grid(
-            row=0,
-            column=0,
-            columnspan=2,
-            pady=(0, 4),
+        selection_label.pack(
+            anchor="w",
+            padx=16,
+            pady=(14, 6),
         )
 
         self.heatmap_dropdown = ttk.Combobox(
-            selection_frame,
+            selection_panel,
             textvariable=self.selected_heatmap_name,
-            width=55,
+            width=gui_config.WIDE_DROPDOWN_WIDTH,
             state="readonly",
+            style="TCubed.TCombobox",
         )
 
-        self.heatmap_dropdown.grid(
-            row=1,
-            column=0,
-            padx=6,
-        )
-
-        self.refresh_heatmaps_button = tk.Button(
-            selection_frame,
-            text=gui_config.REFRESH_HEATMAPS_BUTTON_TEXT,
-            command=self._on_refresh_heatmaps_clicked,
-        )
-
-        self.refresh_heatmaps_button.grid(
-            row=1,
-            column=1,
-            padx=6,
-        )
-
-    def _build_button_section(self, parent):
-        """
-        Add Preview button.
-        """
-
-        button_frame = tk.Frame(parent)
-
-        button_frame.pack(
-            pady=10,
-        )
-
-        self.preview_heatmap_button = tk.Button(
-            button_frame,
-            text=gui_config.PREVIEW_HEATMAP_BUTTON_TEXT,
-            width=gui_config.BUTTON_WIDTH,
-            height=gui_config.BUTTON_HEIGHT,
-            command=self._on_preview_heatmap_clicked,
-        )
-
-        self.preview_heatmap_button.pack(
-            padx=8,
-            pady=4,
+        self.heatmap_dropdown.pack(
+            fill="x",
+            padx=16,
+            pady=(0, 14),
         )
 
     def _build_preview_section(self, parent):
@@ -257,27 +292,171 @@ class ReviewPage(tk.Frame):
         Add image preview area.
         """
 
-        preview_frame = tk.Frame(
+        preview_outer_frame = tk.Frame(
             parent,
-            relief="sunken",
-            borderwidth=1,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
         )
 
-        preview_frame.pack(
+        preview_outer_frame.pack(
             fill="both",
             expand=True,
-            padx=12,
-            pady=8,
+            padx=30,
+            pady=(0, 25),
+        )
+
+        preview_label_title = tk.Label(
+            preview_outer_frame,
+            text="Preview",
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_PRIMARY,
+        )
+
+        preview_label_title.pack(
+            anchor="w",
+            pady=(0, 6),
+        )
+
+        self.preview_frame = tk.Frame(
+            preview_outer_frame,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            bd=0,
+            relief="flat",
+        )
+
+        self.preview_frame.pack(
+            fill="both",
+            expand=True,
         )
 
         self.preview_label = tk.Label(
-            preview_frame,
+            self.preview_frame,
             text="No heatmap preview loaded.",
-            font=gui_config.BODY_FONT,
+            font=gui_config.DISPLAY_BODY_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_SECONDARY,
         )
 
         self.preview_label.pack(
             expand=True,
+        )
+
+    def _build_bottom_panel_section(self):
+        """
+        Build the bottom status/control panel.
+        """
+
+        bottom_panel = tk.Frame(
+            self,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
+
+        bottom_panel.pack(
+            fill="x",
+            padx=gui_config.PANEL_PAD_X,
+            pady=(
+                gui_config.PANEL_PAD_Y_TOP,
+                gui_config.PANEL_PAD_Y_BOTTOM,
+            ),
+        )
+
+        self.status_label = tk.Label(
+            bottom_panel,
+            text=gui_config.REVIEW_IDLE_STATUS_TEXT,
+            font=gui_config.STATUS_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.STATUS_IDLE_COLOR,
+        )
+
+        self.status_label.pack(
+            anchor="w",
+            padx=15,
+            pady=(10, 0),
+        )
+
+        button_frame = tk.Frame(
+            bottom_panel,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
+
+        button_frame.pack(
+            fill="x",
+            padx=10,
+            pady=12,
+        )
+
+        for column_index in range(3):
+            button_frame.columnconfigure(
+                column_index,
+                weight=1,
+            )
+
+
+        self.refresh_heatmaps_button = self._make_action_button(
+            parent=button_frame,
+            text=gui_config.REFRESH_HEATMAPS_BUTTON_TEXT,
+            color=gui_config.PRIMARY_BUTTON_COLOR,
+            command=self._on_refresh_heatmaps_clicked,
+        )
+
+        self.refresh_heatmaps_button.grid(
+            row=0,
+            column=0,
+            padx=8,
+            sticky="ew",
+        )
+
+        self.preview_heatmap_button = self._make_action_button(
+            parent=button_frame,
+            text=gui_config.PREVIEW_HEATMAP_BUTTON_TEXT,
+            color=gui_config.REVIEW_BUTTON_COLOR,
+            command=self._on_preview_heatmap_clicked,
+        )
+
+        self.preview_heatmap_button.grid(
+            row=0,
+            column=1,
+            padx=8,
+            sticky="ew",
+        )
+
+        self.back_button = self._make_action_button(
+            parent=button_frame,
+            text=gui_config.BACK_TO_HOME_BUTTON_TEXT,
+            color=gui_config.SECONDARY_BUTTON_COLOR,
+            command=self._on_back_clicked,
+        )
+
+        self.back_button.grid(
+            row=0,
+            column=2,
+            padx=8,
+            sticky="ew",
+        )
+
+    # --------------------------------------------------------
+    # Widget helpers
+    # --------------------------------------------------------
+
+    def _make_action_button(self, parent, text, color, command):
+        """
+        Create a styled dashboard button.
+        """
+
+        return tk.Button(
+            parent,
+            text=text,
+            font=gui_config.BUTTON_FONT,
+            bg=color,
+            fg="white",
+            activebackground=color,
+            activeforeground="white",
+            disabledforeground="#d1d5db",
+            bd=0,
+            relief="flat",
+            height=gui_config.BUTTON_HEIGHT,
+            cursor="hand2",
+            command=command,
         )
 
     # --------------------------------------------------------
@@ -292,12 +471,10 @@ class ReviewPage(tk.Frame):
         heatmap_paths = self.review_controller.list_available_heatmaps()
 
         self.heatmap_paths_by_name = {}
-
         heatmap_names = []
 
         for heatmap_path in heatmap_paths:
             heatmap_name = heatmap_path.name
-
             self.heatmap_paths_by_name[heatmap_name] = heatmap_path
 
             heatmap_names.append(
@@ -312,7 +489,8 @@ class ReviewPage(tk.Frame):
             )
 
             self._set_status(
-                f"Status: Loaded {len(heatmap_names)} heatmap(s)."
+                f"Status: Loaded {len(heatmap_names)} heatmap(s).",
+                gui_config.STATUS_COMPLETE_COLOR,
             )
 
         else:
@@ -321,7 +499,8 @@ class ReviewPage(tk.Frame):
             )
 
             self._set_status(
-                "Status: No heatmaps found in review/heatmaps."
+                "Status: No heatmaps found in review/heatmaps.",
+                gui_config.STATUS_WARNING_COLOR,
             )
 
     def _get_selected_heatmap_path(self):
@@ -379,10 +558,16 @@ class ReviewPage(tk.Frame):
             )
 
             self._set_status(
-                f"Status: Preview loaded for {selected_heatmap_path.name}"
+                f"Status: Preview loaded for {selected_heatmap_path.name}",
+                gui_config.STATUS_COMPLETE_COLOR,
             )
 
         except Exception as error:
+            self._set_status(
+                "Status: Heatmap preview failed.",
+                gui_config.STATUS_FAILED_COLOR,
+            )
+
             messagebox.showerror(
                 gui_config.HEATMAP_PREVIEW_FAILED_TITLE,
                 str(error),
@@ -418,6 +603,7 @@ class ReviewPage(tk.Frame):
         self.preview_label.config(
             image=self.preview_image,
             text="",
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
         )
 
     def _subsample_image_to_preview_size(self, image):
@@ -475,13 +661,17 @@ class ReviewPage(tk.Frame):
     # GUI helpers
     # --------------------------------------------------------
 
-    def _set_status(self, status_text):
+    def _set_status(self, status_text, color=None):
         """
         Update status label.
         """
 
+        if color is None:
+            color = gui_config.STATUS_IDLE_COLOR
+
         self.status_label.config(
             text=status_text,
+            fg=color,
         )
 
 
@@ -507,7 +697,20 @@ def test_review_page_direct():
         f"{gui_config.WINDOW_WIDTH}x{gui_config.WINDOW_HEIGHT}"
     )
 
-    container = tk.Frame(root)
+    if hasattr(gui_config, "WINDOW_RESIZABLE"):
+        root.resizable(
+            gui_config.WINDOW_RESIZABLE,
+            gui_config.WINDOW_RESIZABLE,
+        )
+
+    root.configure(
+        bg=gui_config.APP_BACKGROUND_COLOR,
+    )
+
+    container = tk.Frame(
+        root,
+        bg=gui_config.APP_BACKGROUND_COLOR,
+    )
 
     container.pack(
         fill="both",

@@ -79,7 +79,10 @@ class AnalysisPage(tk.Frame):
         Create the Analysis page.
         """
 
-        super().__init__(parent)
+        super().__init__(
+            parent,
+            bg=gui_config.APP_BACKGROUND_COLOR,
+        )
 
         self.page_manager = page_manager
         self.analysis_controller = AnalysisController()
@@ -91,8 +94,10 @@ class AnalysisPage(tk.Frame):
         self.recording_dropdown = None
         self.refresh_recordings_button = None
         self.start_analysis_button = None
+        self.back_button = None
         self.log_text = None
 
+        self._configure_ttk_style()
         self._build_page()
         self._load_recording_dropdown()
         self._start_message_polling()
@@ -101,159 +106,188 @@ class AnalysisPage(tk.Frame):
     # Page layout
     # --------------------------------------------------------
 
+    def _configure_ttk_style(self):
+        """
+        Configure ttk widget styles used by this page.
+        """
+
+        style = ttk.Style()
+
+        style.configure(
+            "TCubed.TCombobox",
+            font=gui_config.BODY_FONT,
+        )
+
     def _build_page(self):
         """
         Build the Analysis page layout.
         """
 
-        main_frame = tk.Frame(self)
+        self._build_header_section()
+        self._build_display_section()
+        self._build_bottom_panel_section()
 
-        main_frame.pack(
-            fill="both",
-            expand=True,
-            padx=gui_config.PAGE_PADDING_X,
-            pady=gui_config.PAGE_PADDING_Y,
-        )
-
-        self._build_header_section(
-            parent=main_frame,
-        )
-
-        self._build_status_section(
-            parent=main_frame,
-        )
-
-        self._build_video_selection_section(
-            parent=main_frame,
-        )
-
-        self._build_button_section(
-            parent=main_frame,
-        )
-
-        self._build_log_section(
-            parent=main_frame,
-        )
-
-    def _build_header_section(self, parent):
+    def _build_header_section(self):
         """
-        Add title and Back button.
+        Build the top title/subtitle header.
         """
 
-        header_frame = tk.Frame(parent)
+        header_frame = tk.Frame(
+            self,
+            bg=gui_config.APP_BACKGROUND_COLOR,
+        )
 
         header_frame.pack(
             fill="x",
-            pady=(0, 12),
-        )
-
-        back_button = tk.Button(
-            header_frame,
-            text=gui_config.BACK_TO_HOME_BUTTON_TEXT,
-            command=self._on_back_clicked,
-        )
-
-        back_button.pack(
-            side="left",
+            padx=gui_config.HEADER_PAD_X,
+            pady=(
+                gui_config.HEADER_PAD_Y_TOP,
+                gui_config.HEADER_PAD_Y_BOTTOM,
+            ),
         )
 
         title_label = tk.Label(
             header_frame,
             text=gui_config.ANALYSIS_PAGE_TITLE_TEXT,
-            font=gui_config.TITLE_FONT,
+            font=gui_config.HEADER_TITLE_FONT,
+            bg=gui_config.APP_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
         )
 
         title_label.pack(
-            side="left",
-            padx=20,
+            anchor="w",
         )
 
-    def _build_status_section(self, parent):
+        subtitle_label = tk.Label(
+            header_frame,
+            text=gui_config.ANALYSIS_PAGE_SUBTITLE_TEXT,
+            font=gui_config.HEADER_SUBTITLE_FONT,
+            bg=gui_config.APP_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_SECONDARY,
+        )
+
+        subtitle_label.pack(
+            anchor="w",
+            pady=(3, 0),
+        )
+
+    def _build_display_section(self):
         """
-        Add status label.
+        Build the main light display area.
         """
 
-        self.status_label = tk.Label(
+        display_frame = tk.Frame(
+            self,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+        )
+
+        display_frame.pack(
+            fill="both",
+            expand=True,
+            padx=gui_config.CARD_PAD_X,
+            pady=(
+                gui_config.CARD_PAD_Y_TOP,
+                gui_config.CARD_PAD_Y_BOTTOM,
+            ),
+        )
+
+        self._build_display_intro(
+            parent=display_frame,
+        )
+
+        self._build_video_selection_section(
+            parent=display_frame,
+        )
+
+        self._build_log_section(
+            parent=display_frame,
+        )
+
+    def _build_display_intro(self, parent):
+        """
+        Add display title and description.
+        """
+
+        intro_frame = tk.Frame(
             parent,
-            text=gui_config.ANALYSIS_IDLE_STATUS_TEXT,
-            font=gui_config.SUBTITLE_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
         )
 
-        self.status_label.pack(
-            pady=6,
+        intro_frame.pack(
+            fill="x",
+            padx=30,
+            pady=(28, 12),
+        )
+
+        title_label = tk.Label(
+            intro_frame,
+            text=gui_config.ANALYSIS_DISPLAY_TITLE_TEXT,
+            font=gui_config.DISPLAY_TITLE_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_PRIMARY,
+        )
+
+        title_label.pack(
+            anchor="w",
+        )
+
+        body_label = tk.Label(
+            intro_frame,
+            text=gui_config.ANALYSIS_DISPLAY_BODY_TEXT,
+            font=gui_config.DISPLAY_BODY_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_SECONDARY,
+            wraplength=850,
+            justify="left",
+        )
+
+        body_label.pack(
+            anchor="w",
+            pady=(8, 0),
         )
 
     def _build_video_selection_section(self, parent):
         """
-        Add video selection dropdown and refresh button.
+        Add video selection dropdown.
         """
 
-        selection_frame = tk.Frame(parent)
+        selection_panel = tk.Frame(
+            parent,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
 
-        selection_frame.pack(
-            pady=8,
+        selection_panel.pack(
+            fill="x",
+            padx=30,
+            pady=(10, 12),
         )
 
         selection_label = tk.Label(
-            selection_frame,
+            selection_panel,
             text=gui_config.ANALYSIS_VIDEO_SELECTION_LABEL_TEXT,
-            font=("Arial", 11, "bold"),
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
         )
 
-        selection_label.grid(
-            row=0,
-            column=0,
-            columnspan=2,
-            pady=(0, 4),
+        selection_label.pack(
+            anchor="w",
+            padx=16,
+            pady=(14, 6),
         )
 
         self.recording_dropdown = ttk.Combobox(
-            selection_frame,
+            selection_panel,
             textvariable=self.selected_recording_name,
-            width=55,
+            width=gui_config.WIDE_DROPDOWN_WIDTH,
             state="readonly",
+            style="TCubed.TCombobox",
         )
 
-        self.recording_dropdown.grid(
-            row=1,
-            column=0,
-            padx=6,
-        )
-
-        self.refresh_recordings_button = tk.Button(
-            selection_frame,
-            text=gui_config.REFRESH_RECORDINGS_BUTTON_TEXT,
-            command=self._on_refresh_recordings_clicked,
-        )
-
-        self.refresh_recordings_button.grid(
-            row=1,
-            column=1,
-            padx=6,
-        )
-
-    def _build_button_section(self, parent):
-        """
-        Add Start Analysis button.
-        """
-
-        button_frame = tk.Frame(parent)
-
-        button_frame.pack(
-            pady=10,
-        )
-
-        self.start_analysis_button = tk.Button(
-            button_frame,
-            text=gui_config.START_ANALYSIS_BUTTON_TEXT,
-            width=gui_config.BUTTON_WIDTH,
-            height=gui_config.BUTTON_HEIGHT,
-            command=self._on_start_analysis_clicked,
-        )
-
-        self.start_analysis_button.pack(
-            padx=8,
-            pady=4,
+        self.recording_dropdown.pack(
+            fill="x",
+            padx=16,
+            pady=(0, 14),
         )
 
     def _build_log_section(self, parent):
@@ -261,32 +295,168 @@ class AnalysisPage(tk.Frame):
         Add scrollable log output.
         """
 
-        log_label = tk.Label(
+        log_frame = tk.Frame(
             parent,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+        )
+
+        log_frame.pack(
+            fill="both",
+            expand=True,
+            padx=30,
+            pady=(0, 25),
+        )
+
+        log_label = tk.Label(
+            log_frame,
             text=gui_config.ANALYSIS_LOG_LABEL_TEXT,
-            font=("Arial", 11, "bold"),
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_PRIMARY,
         )
 
         log_label.pack(
-            pady=(8, 0),
+            anchor="w",
+            pady=(0, 6),
         )
 
         self.log_text = scrolledtext.ScrolledText(
-            parent,
+            log_frame,
             width=gui_config.ANALYSIS_LOG_BOX_WIDTH,
             height=gui_config.ANALYSIS_LOG_BOX_HEIGHT,
             state="disabled",
+            font=gui_config.LOG_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_MUTED,
+            insertbackground=gui_config.TEXT_ON_DARK_PRIMARY,
+            relief="flat",
+            borderwidth=0,
         )
 
         self.log_text.pack(
-            padx=12,
-            pady=8,
             fill="both",
             expand=True,
         )
 
         self._append_log_message(
             gui_config.ANALYSIS_STARTUP_LOG_MESSAGE,
+        )
+
+    def _build_bottom_panel_section(self):
+        """
+        Build the bottom status/control panel.
+        """
+
+        bottom_panel = tk.Frame(
+            self,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
+
+        bottom_panel.pack(
+            fill="x",
+            padx=gui_config.PANEL_PAD_X,
+            pady=(
+                gui_config.PANEL_PAD_Y_TOP,
+                gui_config.PANEL_PAD_Y_BOTTOM,
+            ),
+        )
+
+        self.status_label = tk.Label(
+            bottom_panel,
+            text=gui_config.ANALYSIS_IDLE_STATUS_TEXT,
+            font=gui_config.STATUS_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.STATUS_IDLE_COLOR,
+        )
+
+        self.status_label.pack(
+            anchor="w",
+            padx=15,
+            pady=(10, 0),
+        )
+
+        button_frame = tk.Frame(
+            bottom_panel,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
+
+        button_frame.pack(
+            fill="x",
+            padx=10,
+            pady=12,
+        )
+
+        for column_index in range(3):
+            button_frame.columnconfigure(
+                column_index,
+                weight=1,
+            )
+
+        self.refresh_recordings_button = self._make_action_button(
+            parent=button_frame,
+            text=gui_config.REFRESH_RECORDINGS_BUTTON_TEXT,
+            color=gui_config.PRIMARY_BUTTON_COLOR,
+            command=self._on_refresh_recordings_clicked,
+        )
+
+        self.refresh_recordings_button.grid(
+            row=0,
+            column=0,
+            padx=8,
+            sticky="ew",
+        )
+
+        self.start_analysis_button = self._make_action_button(
+            parent=button_frame,
+            text=gui_config.START_ANALYSIS_BUTTON_TEXT,
+            color=gui_config.ANALYSIS_BUTTON_COLOR,
+            command=self._on_start_analysis_clicked,
+        )
+
+        self.start_analysis_button.grid(
+            row=0,
+            column=1,
+            padx=8,
+            sticky="ew",
+        )
+
+        self.back_button = self._make_action_button(
+            parent=button_frame,
+            text=gui_config.BACK_TO_HOME_BUTTON_TEXT,
+            color=gui_config.SECONDARY_BUTTON_COLOR,
+            command=self._on_back_clicked,
+        )
+
+        self.back_button.grid(
+            row=0,
+            column=2,
+            padx=8,
+            sticky="ew",
+        )
+
+    # --------------------------------------------------------
+    # Widget helpers
+    # --------------------------------------------------------
+
+    def _make_action_button(self, parent, text, color, command):
+        """
+        Create a styled dashboard button.
+        """
+
+        return tk.Button(
+            parent,
+            text=text,
+            font=gui_config.BUTTON_FONT,
+            bg=color,
+            fg="white",
+            activebackground=color,
+            activeforeground="white",
+            disabledforeground="#d1d5db",
+            bd=0,
+            relief="flat",
+            height=gui_config.BUTTON_HEIGHT,
+            cursor="hand2",
+            command=command,
         )
 
     # --------------------------------------------------------
@@ -301,12 +471,10 @@ class AnalysisPage(tk.Frame):
         recording_paths = self.analysis_controller.list_available_recordings()
 
         self.recording_paths_by_name = {}
-
         recording_names = []
 
         for recording_path in recording_paths:
             recording_name = recording_path.name
-
             self.recording_paths_by_name[recording_name] = recording_path
 
             recording_names.append(
@@ -359,7 +527,7 @@ class AnalysisPage(tk.Frame):
         """
         Return to the navigation page.
 
-        If analysis is running, prevent leaving the page for now.
+        If analysis is running, prevent leaving the page.
         """
 
         if self.analysis_controller.is_analysis_running():
@@ -424,6 +592,7 @@ class AnalysisPage(tk.Frame):
 
         self._set_status(
             gui_config.ANALYSIS_RUNNING_STATUS_TEXT,
+            gui_config.STATUS_RUNNING_COLOR,
         )
 
         self._set_analysis_controls_enabled(
@@ -480,12 +649,14 @@ class AnalysisPage(tk.Frame):
 
         if message_type == "status":
             self._set_status(
-                f"Status: {message_text}"
+                f"Status: {message_text}",
+                gui_config.STATUS_RUNNING_COLOR,
             )
 
         elif message_type == "warning":
             self._set_status(
-                f"Status: Warning - {message_text}"
+                f"Status: Warning - {message_text}",
+                gui_config.STATUS_WARNING_COLOR,
             )
 
         elif message_type == "complete":
@@ -505,6 +676,7 @@ class AnalysisPage(tk.Frame):
 
         self._set_status(
             gui_config.ANALYSIS_COMPLETE_STATUS_TEXT,
+            gui_config.STATUS_COMPLETE_COLOR,
         )
 
         self._set_analysis_controls_enabled(
@@ -527,6 +699,7 @@ class AnalysisPage(tk.Frame):
 
         self._set_status(
             gui_config.ANALYSIS_FAILED_STATUS_TEXT,
+            gui_config.STATUS_FAILED_COLOR,
         )
 
         self._set_analysis_controls_enabled(
@@ -576,13 +749,17 @@ class AnalysisPage(tk.Frame):
     # GUI helpers
     # --------------------------------------------------------
 
-    def _set_status(self, status_text):
+    def _set_status(self, status_text, color=None):
         """
         Update the status label.
         """
 
+        if color is None:
+            color = gui_config.STATUS_IDLE_COLOR
+
         self.status_label.config(
             text=status_text,
+            fg=color,
         )
 
     def _set_analysis_controls_enabled(self, is_enabled):
@@ -602,6 +779,10 @@ class AnalysisPage(tk.Frame):
         )
 
         self.refresh_recordings_button.config(
+            state=button_state,
+        )
+
+        self.back_button.config(
             state=button_state,
         )
 
@@ -645,12 +826,29 @@ def test_analysis_page_direct():
     from navigation_page import NavigationPage
 
     root = tk.Tk()
-    root.title("Analysis Page Direct Test")
+
+    root.title(
+        "Analysis Page Direct Test",
+    )
+
     root.geometry(
         f"{gui_config.WINDOW_WIDTH}x{gui_config.WINDOW_HEIGHT}"
     )
 
-    container = tk.Frame(root)
+    if hasattr(gui_config, "WINDOW_RESIZABLE"):
+        root.resizable(
+            gui_config.WINDOW_RESIZABLE,
+            gui_config.WINDOW_RESIZABLE,
+        )
+
+    root.configure(
+        bg=gui_config.APP_BACKGROUND_COLOR,
+    )
+
+    container = tk.Frame(
+        root,
+        bg=gui_config.APP_BACKGROUND_COLOR,
+    )
 
     container.pack(
         fill="both",
