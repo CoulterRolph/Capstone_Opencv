@@ -8,21 +8,22 @@ Current scope:
 - Convert pace from seconds to milliseconds.
 - Track preview/training state.
 - Simulate Start Preview / Stop Preview.
-- Simulate Start Training / Stop Training.
-- Simulate STM32 COMPLETE handling.
+- Coordinate STM32 SETTING / START / STOP.
+- Keep dry-run mode available by config.
+- Simulate recording start / stop placeholders.
+- Handle STM32 COMPLETE messages.
 
 Future scope:
-- Start/stop low-FPS camera preview.
-- Send SETTING / START / STOP to STM32 using comm/serial.py.
-- Read STM32 response strings.
+- Read STM32 response strings from a listener thread.
 - Start/stop high-FPS GStreamer/MKV recording.
+- Start/stop low-FPS camera preview.
 - Stop recording automatically when STM32 sends COMPLETE.
 
 Important:
 - This controller should not create Tkinter widgets.
 - This controller should not contain YOLO logic.
 - This controller should not directly draw camera preview frames.
-- This controller should coordinate lower-level modules later.
+- This controller should coordinate lower-level modules.
 """
 
 
@@ -32,6 +33,7 @@ Important:
 
 from dataclasses import dataclass
 from pathlib import Path
+import importlib.util
 import queue
 import sys
 
@@ -78,7 +80,7 @@ class TrainingSettings:
     Clean validated training settings.
 
     The GUI shows pace in seconds.
-    The STM32 will eventually receive pace in milliseconds.
+    The STM32 receives pace in milliseconds.
     """
 
     ball_speed: int
@@ -88,7 +90,7 @@ class TrainingSettings:
 
     def build_setting_values_preview(self):
         """
-        Build a preview of the future SETTING field values.
+        Build a preview of the SETTING field values.
 
         This is not the full serial message.
 
@@ -139,6 +141,8 @@ class TrainingController:
         self.last_recording_path = None
         self.last_stm32_response = None
 
+        self._stm32_serial_module = None
+
     # --------------------------------------------------------
     # Public state helpers
     # --------------------------------------------------------
@@ -149,6 +153,13 @@ class TrainingController:
         """
 
         return self.state
+
+    def get_current_state(self):
+        """
+        Backward-compatible state getter for GUI code.
+        """
+
+        return self.get_state()
 
     def is_preview_running(self):
         """
@@ -372,7 +383,15 @@ class TrainingController:
         number_of_shots,
     ):
         """
-        Start training placeholder.
+        Start training.
+
+        Current sequence:
+        1. Validate settings.
+        2. Stop preview if running.
+        3. Send/dry-run SETTING to STM32.
+        4. Start recording placeholder.
+        5. Send/dry-run START to STM32.
+        6. Set state to TRAINING.
 
         Future real sequence:
         1. Validate settings.
@@ -417,13 +436,39 @@ class TrainingController:
             training_controller_config.STATUS_SETTINGS_VALIDATED,
         )
 
-        self._send_setting_placeholder(
-            settings=settings,
-        )
+        try:
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_SENDING_SETTING,
+            )
 
-        self._start_recording_placeholder()
+            self._send_stm32_settings(
+                settings=settings,
+            )
 
-        self._send_start_placeholder()
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_SETTING_STEP_COMPLETE,
+            )
+
+            self._start_recording_placeholder()
+
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_SENDING_START,
+            )
+
+            self._send_stm32_start()
+
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_START_STEP_COMPLETE,
+            )
+
+        except Exception as error:
+            self.state = training_controller_config.STATE_ERROR
+
+            self._put_error_message(
+                f"Start training failed: {error}",
+            )
+
+            return False
 
         self.state = training_controller_config.STATE_TRAINING
 
@@ -435,7 +480,12 @@ class TrainingController:
 
     def stop_training(self):
         """
-        Manually stop training placeholder.
+        Manually stop training.
+
+        Current sequence:
+        1. Send/dry-run STOP to STM32.
+        2. Stop recording placeholder.
+        3. Return state to IDLE.
 
         Future real sequence:
         1. Send STOP to STM32.
@@ -452,9 +502,27 @@ class TrainingController:
 
         self.state = training_controller_config.STATE_STOPPING
 
-        self._send_stop_placeholder()
+        try:
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_SENDING_STOP,
+            )
 
-        self._stop_recording_placeholder()
+            self._send_stm32_stop()
+
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_STOP_STEP_COMPLETE,
+            )
+
+            self._stop_recording_placeholder()
+
+        except Exception as error:
+            self.state = training_controller_config.STATE_ERROR
+
+            self._put_error_message(
+                f"Stop training failed: {error}",
+            )
+
+            return False
 
         self.state = training_controller_config.STATE_IDLE
 
@@ -468,7 +536,7 @@ class TrainingController:
         """
         Handle a message received from STM32.
 
-        This is placeholder-ready for future serial integration.
+        This is ready for future serial listener integration.
 
         Important:
             If STM32 sends COMPLETE while training is running,
@@ -476,7 +544,7 @@ class TrainingController:
 
         Direction reminder:
             START / STOP / SETTING are sent TO STM32 by comm/serial.py.
-            COMPLETE / ACK messages are received FROM STM32.
+            COMPLETE / ACK / ERR messages are received FROM STM32.
         """
 
         if message is None:
@@ -488,6 +556,11 @@ class TrainingController:
             return
 
         self.last_stm32_response = clean_message
+
+        self._put_status_message(
+            f"{training_controller_config.STATUS_STM32_MESSAGE_RECEIVED}: "
+            f"{clean_message}"
+        )
 
         uppercase_message = clean_message.upper()
 
@@ -503,7 +576,11 @@ class TrainingController:
                 f"STM32 acknowledged: {clean_message}",
             )
 
-        elif uppercase_message.startswith("ERR"):
+        elif uppercase_message.startswith(
+            training_controller_config.STM32_RESPONSE_ERROR_PREFIX
+        ):
+            self.state = training_controller_config.STATE_ERROR
+
             self._put_error_message(
                 f"STM32 error: {clean_message}",
             )
@@ -542,53 +619,273 @@ class TrainingController:
         )
 
     # --------------------------------------------------------
-    # Placeholder hardware actions
+    # STM32 serial module loading
     # --------------------------------------------------------
 
-    def _send_setting_placeholder(self, settings):
+    def _load_stm32_serial_module(self):
         """
-        Placeholder for future STM32 SETTING command.
+        Load project/jetson/comm/serial.py directly.
 
-        Future real implementation should call comm/serial.py:
+        This avoids confusion with the external pyserial package,
+        which is also named 'serial'.
+        """
 
-            serial_comm.send_setting_command(
-                ballspeed=settings.ball_speed,
-                rate=settings.pace_milliseconds,
-                number_of_shots=settings.number_of_shots,
+        if self._stm32_serial_module is not None:
+            return self._stm32_serial_module
+
+        serial_module_path = (
+            PROJECT_ROOT
+            / training_controller_config.SERIAL_MODULE_RELATIVE_PATH
+        )
+
+        if not serial_module_path.exists():
+            raise FileNotFoundError(
+                f"STM32 serial module not found: {serial_module_path}"
             )
 
-        Note:
-            The serial module currently names the second field "rate".
-            For the GUI, we treat it as pace shown in seconds and converted
-            to milliseconds before sending.
-        """
+        module_spec = importlib.util.spec_from_file_location(
+            "tcubed_stm32_serial",
+            serial_module_path,
+        )
 
-        setting_values_preview = settings.build_setting_values_preview()
-
-        self._put_status_message(
-            (
-                training_controller_config.STATUS_SETTING_SENT_PLACEHOLDER
-                + f" Future values: {setting_values_preview}"
+        if module_spec is None:
+            raise RuntimeError(
+                f"Could not create import spec for: {serial_module_path}"
             )
+
+        if module_spec.loader is None:
+            raise RuntimeError(
+                f"Could not load serial module from: {serial_module_path}"
+            )
+
+        serial_module = importlib.util.module_from_spec(
+            module_spec,
         )
 
-    def _send_start_placeholder(self):
+        module_spec.loader.exec_module(
+            serial_module,
+        )
+
+        self._stm32_serial_module = serial_module
+
+        return self._stm32_serial_module
+
+    # --------------------------------------------------------
+    # STM32 message preview helpers
+    # --------------------------------------------------------
+
+    def _clean_stm32_message_preview(self, message):
         """
-        Placeholder for future STM32 START command.
+        Convert a serial message into a clean one-line preview.
+
+        comm/serial.py returns strings with a newline.
+        This helper removes the newline for GUI/terminal logging.
         """
+
+        if isinstance(message, bytes):
+            return message.decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+
+        return str(message).strip()
+
+    def _build_stm32_setting_message_preview(self, settings):
+        """
+        Build the SETTING message preview using comm/serial.py.
+
+        The real serial module owns the message format.
+        The controller only coordinates when the message is needed.
+        """
+
+        serial_module = self._load_stm32_serial_module()
+
+        if not hasattr(serial_module, "build_setting_message"):
+            raise RuntimeError(
+                "comm/serial.py does not provide build_setting_message()."
+            )
+
+        message = serial_module.build_setting_message(
+            ballspeed=settings.ball_speed,
+            rate=settings.pace_milliseconds,
+            number_of_shots=settings.number_of_shots,
+        )
+
+        return self._clean_stm32_message_preview(
+            message,
+        )
+
+    def _build_stm32_start_message_preview(self):
+        """
+        Build the START message preview using comm/serial.py.
+        """
+
+        serial_module = self._load_stm32_serial_module()
+
+        if not hasattr(serial_module, "build_start_message"):
+            raise RuntimeError(
+                "comm/serial.py does not provide build_start_message()."
+            )
+
+        message = serial_module.build_start_message()
+
+        return self._clean_stm32_message_preview(
+            message,
+        )
+
+    def _build_stm32_stop_message_preview(self):
+        """
+        Build the STOP message preview using comm/serial.py.
+        """
+
+        serial_module = self._load_stm32_serial_module()
+
+        if not hasattr(serial_module, "build_stop_message"):
+            raise RuntimeError(
+                "comm/serial.py does not provide build_stop_message()."
+            )
+
+        message = serial_module.build_stop_message()
+
+        return self._clean_stm32_message_preview(
+            message,
+        )
+
+    # --------------------------------------------------------
+    # STM32 send helpers
+    # --------------------------------------------------------
+
+    def _send_stm32_settings(self, settings):
+        """
+        Send or dry-run the SETTING command.
+
+        Dry-run is the default. Real sending only happens when
+        ENABLE_REAL_STM32_SERIAL is True in training_controller_config.py.
+        """
+
+        message_preview = self._build_stm32_setting_message_preview(
+            settings=settings,
+        )
+
+        if training_controller_config.LOG_STM32_COMMAND_PAYLOADS:
+            self._put_status_message(
+                f"STM32 SETTING payload: {message_preview}",
+            )
+
+        if not training_controller_config.ENABLE_REAL_STM32_SERIAL:
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_DRY_RUN_SETTING,
+            )
+
+            return None
+
+        serial_module = self._load_stm32_serial_module()
+
+        if not hasattr(serial_module, "send_setting_command"):
+            raise RuntimeError(
+                "comm/serial.py does not provide send_setting_command()."
+            )
+
+        bytes_written = serial_module.send_setting_command(
+            ballspeed=settings.ball_speed,
+            rate=settings.pace_milliseconds,
+            number_of_shots=settings.number_of_shots,
+            device_path=training_controller_config.STM32_SERIAL_DEVICE_PATH,
+            baud_rate=training_controller_config.STM32_SERIAL_BAUD_RATE,
+        )
+
+        self.last_stm32_response = bytes_written
 
         self._put_status_message(
-            training_controller_config.STATUS_START_SENT_PLACEHOLDER,
+            f"{training_controller_config.STATUS_STM32_SETTING_SENT} "
+            f"Bytes written: {bytes_written}"
         )
 
-    def _send_stop_placeholder(self):
+        return bytes_written
+
+    def _send_stm32_start(self):
         """
-        Placeholder for future STM32 STOP command.
+        Send or dry-run the START command.
         """
+
+        message_preview = self._build_stm32_start_message_preview()
+
+        if training_controller_config.LOG_STM32_COMMAND_PAYLOADS:
+            self._put_status_message(
+                f"STM32 START payload: {message_preview}",
+            )
+
+        if not training_controller_config.ENABLE_REAL_STM32_SERIAL:
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_DRY_RUN_START,
+            )
+
+            return None
+
+        serial_module = self._load_stm32_serial_module()
+
+        if not hasattr(serial_module, "send_start_command"):
+            raise RuntimeError(
+                "comm/serial.py does not provide send_start_command()."
+            )
+
+        bytes_written = serial_module.send_start_command(
+            device_path=training_controller_config.STM32_SERIAL_DEVICE_PATH,
+            baud_rate=training_controller_config.STM32_SERIAL_BAUD_RATE,
+        )
+
+        self.last_stm32_response = bytes_written
 
         self._put_status_message(
-            training_controller_config.STATUS_STOP_SENT_PLACEHOLDER,
+            f"{training_controller_config.STATUS_STM32_START_SENT} "
+            f"Bytes written: {bytes_written}"
         )
+
+        return bytes_written
+
+    def _send_stm32_stop(self):
+        """
+        Send or dry-run the STOP command.
+        """
+
+        message_preview = self._build_stm32_stop_message_preview()
+
+        if training_controller_config.LOG_STM32_COMMAND_PAYLOADS:
+            self._put_status_message(
+                f"STM32 STOP payload: {message_preview}",
+            )
+
+        if not training_controller_config.ENABLE_REAL_STM32_SERIAL:
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_DRY_RUN_STOP,
+            )
+
+            return None
+
+        serial_module = self._load_stm32_serial_module()
+
+        if not hasattr(serial_module, "send_stop_command"):
+            raise RuntimeError(
+                "comm/serial.py does not provide send_stop_command()."
+            )
+
+        bytes_written = serial_module.send_stop_command(
+            device_path=training_controller_config.STM32_SERIAL_DEVICE_PATH,
+            baud_rate=training_controller_config.STM32_SERIAL_BAUD_RATE,
+        )
+
+        self.last_stm32_response = bytes_written
+
+        self._put_status_message(
+            f"{training_controller_config.STATUS_STM32_STOP_SENT} "
+            f"Bytes written: {bytes_written}"
+        )
+
+        return bytes_written
+
+    # --------------------------------------------------------
+    # Placeholder recording actions
+    # --------------------------------------------------------
 
     def _start_recording_placeholder(self):
         """
@@ -659,15 +956,26 @@ class TrainingController:
     def _put_message(self, message_type, message):
         """
         Add a controller message to the queue.
+
+        The GUI reads this queue.
+        Optional terminal printing helps with hardware debugging.
         """
 
+        controller_message = {
+            "type": message_type,
+            "message": message,
+            "state": self.state,
+        }
+
         self.message_queue.put(
-            {
-                "type": message_type,
-                "message": message,
-                "state": self.state,
-            }
+            controller_message,
         )
+
+        if training_controller_config.PRINT_CONTROLLER_MESSAGES_TO_TERMINAL:
+            print(
+                f"[{message_type}] {message} (state={self.state})",
+                flush=True,
+            )
 
 
 # ============================================================
@@ -677,6 +985,10 @@ class TrainingController:
 def print_controller_messages(training_controller):
     """
     Print all queued controller messages.
+
+    If PRINT_CONTROLLER_MESSAGES_TO_TERMINAL is True, messages are already
+    printed when they are queued. To avoid duplicate direct-test output,
+    this function only drains the queue in that case.
     """
 
     while True:
@@ -685,6 +997,9 @@ def print_controller_messages(training_controller):
         if message is None:
             break
 
+        if training_controller_config.PRINT_CONTROLLER_MESSAGES_TO_TERMINAL:
+            continue
+
         print(
             f"[{message['type']}] "
             f"{message['message']} "
@@ -692,22 +1007,21 @@ def print_controller_messages(training_controller):
         )
 
 
-def test_training_controller_direct():
+def test_training_controller_complete_flow():
     """
-    Direct test for TrainingController.
+    Direct test for the STM32 COMPLETE path.
 
     This test does not use:
     - Tkinter
-    - STM32
     - camera
     - GStreamer
     - YOLO
     """
 
     print()
-    print("===========================================")
-    print(" Running Training Controller Direct Test")
-    print("===========================================")
+    print("-------------------------------------------")
+    print(" COMPLETE flow test")
+    print("-------------------------------------------")
 
     training_controller = TrainingController()
 
@@ -750,6 +1064,67 @@ def test_training_controller_direct():
     print()
     print("Final state:")
     print(training_controller.get_state())
+
+
+def test_training_controller_manual_stop_flow():
+    """
+    Direct test for the manual Stop Training path.
+    """
+
+    print()
+    print("-------------------------------------------")
+    print(" Manual stop flow test")
+    print("-------------------------------------------")
+
+    training_controller = TrainingController()
+
+    print()
+    print("Starting training...")
+    training_controller.start_training(
+        ball_speed=75,
+        pace_seconds=1.5,
+        number_of_shots=10,
+    )
+    print_controller_messages(
+        training_controller,
+    )
+
+    print()
+    print("Stopping training manually...")
+    training_controller.stop_training()
+    print_controller_messages(
+        training_controller,
+    )
+
+    print()
+    print("Final state:")
+    print(training_controller.get_state())
+
+
+def test_training_controller_direct():
+    """
+    Direct test for TrainingController.
+    """
+
+    print()
+    print("===========================================")
+    print(" Running Training Controller Direct Test")
+    print("===========================================")
+
+    print()
+    print("STM32 real serial enabled:")
+    print(training_controller_config.ENABLE_REAL_STM32_SERIAL)
+
+    print()
+    print("STM32 serial device path:")
+    print(training_controller_config.STM32_SERIAL_DEVICE_PATH)
+
+    print()
+    print("STM32 serial baud rate:")
+    print(training_controller_config.STM32_SERIAL_BAUD_RATE)
+
+    test_training_controller_complete_flow()
+    test_training_controller_manual_stop_flow()
 
     print()
     print("===========================================")
