@@ -2,46 +2,31 @@
 
 ## Project Overview
 
-T-Cubed is a table-tennis training assistant that uses computer vision and embedded hardware to support table-tennis practice sessions.
+T-Cubed is a table-tennis training assistant that combines computer vision, embedded hardware, and a graphical user interface to support table-tennis practice sessions.
 
 The system is designed to:
 
-* Record high-speed table-tennis training videos.
-* Analyze the recorded video using computer vision.
+* Record table-tennis training sessions.
+* Analyze recorded video using computer vision.
 * Detect the table, ball, and bounce locations.
-* Generate visual feedback such as annotated videos and bounce heatmaps.
+* Map bounce locations onto a top-down table view.
+* Generate review outputs such as heatmaps and annotated videos.
 * Communicate with an STM32-based ball launcher over serial.
+* Provide a user-facing Tkinter GUI for training, analysis, and review workflows.
 
-The project is built on an NVIDIA Jetson platform using Python, OpenCV, YOLO models, GStreamer, Tkinter, and serial communication.
+The project is built around a modular workflow:
 
----
+```text
+Record training session
+↓
+Analyze recorded video
+↓
+Generate visual outputs
+↓
+Review training results
+```
 
-## Current Project Status
-
-Current working features:
-
-* Tkinter GUI with page-based navigation.
-* Separate GUI pages for:
-
-  * Start Training
-  * Analysis
-  * Review
-* Layered controller-based architecture.
-* Analysis page can select a recording and run analysis.
-* Review page can display saved heatmap images.
-* Computer vision analysis pipeline works end-to-end on recorded video.
-* Table detection and homography are working.
-* Ball tracking and bounce detection are working.
-* Heatmap generation is working.
-* Offline annotated video generation is working.
-* STM32 serial command sending is working through the Training Controller.
-* Training recording and live preview are still future integration steps.
-
----
-
-## High-Level Architecture
-
-The software follows a layered, controller-based architecture.
+The software follows a layered, controller-based architecture:
 
 ```text
 Tkinter GUI Pages
@@ -61,120 +46,163 @@ Controllers coordinate workflows.
 Functional modules do the actual work.
 ```
 
-This keeps the project modular, easier to test, and safer to expand.
+This keeps the project easier to test, debug, document, and expand.
 
 ---
 
-## Main Software Flow
+## Current Features
+
+Current working features:
+
+* Page-based Tkinter GUI.
+* Navigation page with:
+
+  * Start Training
+  * Analysis
+  * Review
+* Themed GUI pages using a consistent dark dashboard-style layout.
+* Analysis page can:
+
+  * List recordings from `capture/recordings/`
+  * Select a recording video
+  * Start analysis from the GUI
+  * Run analysis in a background thread
+  * Display status and log messages
+* Review page can:
+
+  * List saved heatmap PNG files
+  * Select a heatmap
+  * Preview the heatmap inside Tkinter
+* Computer vision analysis pipeline can:
+
+  * Open and validate a recorded video
+  * Detect the table
+  * Compute table homography
+  * Track the active ball
+  * Detect bounce events
+  * Generate an annotated video
+  * Generate a bounce heatmap
+* STM32 serial command path can:
+
+  * Build `SETTING`, `START`, and `STOP` commands
+  * Send real serial commands through the Training Controller
+  * Log command payloads and bytes written
+* Recording strategy has been selected:
+
+  * MJPG camera format
+  * MKV container
+  * GStreamer recording
+  * Offline OpenCV analysis
+
+Planned but not fully connected yet:
+
+* Real Training page recording integration.
+* Low-FPS camera preview.
+* Table detection overlay during preview.
+* STM32 response listener.
+* Automatic `COMPLETE` detection from STM32.
+* Richer JSON result export.
+* Review page statistics and feedback summary.
+
+---
+
+## Hardware Used
+
+Current hardware used or planned for the system:
+
+| Hardware                   | Purpose                                                        |
+| -------------------------- | -------------------------------------------------------------- |
+| NVIDIA Jetson Orin Nano    | Main embedded computer for GUI, recording, and computer vision |
+| USB Camera                 | Captures table-tennis video                                    |
+| STM32 Microcontroller      | Controls the ball launcher / shooter system                    |
+| Table-tennis ball launcher | Sends balls during training sessions                           |
+| Table-tennis table         | Training environment                                           |
+| Display / X11 forwarding   | Used to view the Tkinter GUI from the Jetson/container setup   |
+
+Current camera recording direction:
 
 ```text
-User
+USB camera
 ↓
-Tkinter GUI
+MJPG stream
 ↓
-Training / Analysis / Review Controllers
+GStreamer recording
 ↓
-Recording, Serial, Computer Vision, Review Modules
+MKV video file
 ↓
-Camera, STM32, saved videos, heatmaps, annotated videos
+Offline OpenCV analysis
+```
+
+Preferred recording mode:
+
+```text
+Container: MKV
+Camera format: MJPG
+Target mode: 1280 × 720 at 120 FPS
 ```
 
 ---
 
-## Main Workflows
+## Software Stack
 
-### Training Workflow
+Main software tools and libraries:
 
-The intended Training workflow is:
+| Software         | Purpose                                                              |
+| ---------------- | -------------------------------------------------------------------- |
+| Python 3         | Main programming language                                            |
+| OpenCV           | Video reading, frame processing, drawing, homography, and annotation |
+| Ultralytics YOLO | Table, ball, and player detection models                             |
+| GStreamer        | High-FPS camera recording                                            |
+| Tkinter          | Desktop GUI                                                          |
+| PySerial         | STM32 serial communication                                           |
+| NumPy            | Array and coordinate processing                                      |
+| Matplotlib       | Heatmap generation                                                   |
+| Docker           | Development/runtime environment on Jetson                            |
+| Git              | Version control                                                      |
 
-```text
-User opens Training page
-↓
-User enters ball speed, pace, and number of shots
-↓
-Training page sends settings to Training Controller
-↓
-Training Controller sends SETTING command to STM32
-↓
-Recording starts
-↓
-Training Controller sends START command to STM32
-↓
-STM32 runs training sequence
-↓
-Training ends by user STOP or STM32 COMPLETE
-↓
-Recording stops
-↓
-Saved recording becomes available for analysis
-```
-
-Current status:
+Main software architecture:
 
 ```text
-STM32 serial sending works.
-Recording integration is still planned.
-Camera preview integration is still planned.
-```
+gui/
+    Tkinter pages and visual interface
 
----
+controller/
+    Workflow coordination and state management
 
-### Analysis Workflow
+analysis/
+    Computer vision pipeline and analysis helpers
 
-The current Analysis workflow is:
+comm/
+    STM32 serial communication
 
-```text
-User selects recorded video
-↓
-Analysis Controller starts analysis
-↓
-analysis.py opens and checks video
-↓
-Table model detects table corners
-↓
-Homography maps camera view to top-down table coordinates
-↓
-Ball model tracks the active ball
-↓
-Bounce logic detects bounce events
-↓
-Heatmap and annotated video are generated
-↓
-Outputs are saved for review
+capture/
+    Recording-related files and saved videos
+
+review/
+    Saved heatmaps and annotated videos
+
+models/
+    YOLO model files
+
+docs/
+    Project documentation and Mermaid flowcharts
 ```
 
 ---
 
-### Review Workflow
+## Repository Structure
 
-The current Review workflow is:
-
-```text
-User opens Review page
-↓
-Review Controller lists saved heatmaps
-↓
-User selects heatmap
-↓
-Tkinter previews heatmap inside the GUI
-```
-
-Future Review features may include:
-
-* Annotated video selection.
-* JSON result loading.
-* Bounce statistics.
-* Training feedback summary.
-
----
-
-## Project Structure
+Current project structure:
 
 ```text
 project/jetson/
 ├── README.md
+│
 ├── docs/
-│   └── software_architecture.md
+│   ├── software_architecture.md
+│   ├── training_workflow.md
+│   ├── analysis_pipeline.md
+│   └── review_workflow.md
 │
 ├── gui/
 │   ├── gui.py
@@ -225,52 +253,59 @@ project/jetson/
 
 ---
 
-## Important Modules
+## How to Run in Docker
 
-| Module                              | Responsibility                                                   |
-| ----------------------------------- | ---------------------------------------------------------------- |
-| `gui/gui.py`                        | Main Tkinter shell and page registration                         |
-| `gui/page_manager.py`               | Switches between GUI pages                                       |
-| `gui/training_page.py`              | User interface for training settings and controls                |
-| `gui/analysis_page.py`              | User interface for selecting videos and running analysis         |
-| `gui/review_page.py`                | User interface for reviewing saved heatmaps                      |
-| `controller/training_controller.py` | Coordinates training state, STM32 commands, and future recording |
-| `controller/analysis_controller.py` | Starts analysis in a background thread                           |
-| `controller/review_controller.py`   | Lists saved review artifacts                                     |
-| `comm/serial.py`                    | Builds and sends STM32 serial messages                           |
-| `analysis/analysis.py`              | Main computer vision pipeline controller                         |
-| `analysis/table.py`                 | Detects table keypoints                                          |
-| `analysis/homography.py`            | Computes table homography                                        |
-| `analysis/ball.py`                  | Tracks active ball detections                                    |
-| `analysis/bounce.py`                | Detects bounce events                                            |
-| `analysis/annotate.py`              | Saves offline annotated videos                                   |
-| `analysis/heatmap.py`               | Generates bounce heatmaps                                        |
+The project is normally developed and run inside the Jetson Docker container.
 
----
-
-## Recording Strategy
-
-The preferred recording strategy is:
+Typical project path inside the container:
 
 ```text
-USB camera MJPG stream
-↓
-GStreamer direct recording
-↓
-MKV container
-↓
-Offline OpenCV analysis
+/workspace/tcubed/project/jetson
 ```
 
-Preferred recording format:
+Enter the project folder:
+
+```bash
+cd /workspace/tcubed/project/jetson
+```
+
+Check that the camera device is available:
+
+```bash
+ls /dev/video*
+```
+
+Check that the STM32 serial device is available:
+
+```bash
+ls /dev/ttyACM*
+ls /dev/ttyUSB*
+```
+
+Check Python imports:
+
+```bash
+python3 -c "import cv2; print(cv2.__version__)"
+python3 -c "import serial; print(serial.__version__)"
+python3 -c "import tkinter; print('tkinter available')"
+```
+
+Check that the GUI can access the display:
+
+```bash
+echo $DISPLAY
+```
+
+If running from a fresh container, make sure the Docker run command includes:
 
 ```text
-Container: MKV
-Camera format: MJPG
-Target mode: 1280 × 720 at 120 FPS
+- project folder mounted into /workspace/tcubed
+- /dev/video0 passed into the container
+- STM32 serial device passed into the container
+- DISPLAY environment variable
+- X11 socket mount
+- NVIDIA runtime enabled
 ```
-
-This project records first and processes later to reduce load during capture and make computer vision analysis more reliable.
 
 ---
 
@@ -284,7 +319,7 @@ cd /workspace/tcubed/project/jetson
 python3 gui/gui.py
 ```
 
-The GUI opens with three main sections:
+The GUI should open with three main pages:
 
 ```text
 Start Training
@@ -292,9 +327,66 @@ Analysis
 Review
 ```
 
+Current GUI workflow:
+
+```text
+Home page
+↓
+Start Training page
+    Configure future training workflow and STM32 commands
+
+Analysis page
+    Select a recorded video and run analysis
+
+Review page
+    Select and preview saved heatmap outputs
+```
+
+The GUI uses page isolation:
+
+```text
+navigation_page.py
+    Handles workflow selection only
+
+training_page.py
+    Handles training controls only
+
+analysis_page.py
+    Handles selected-video analysis only
+
+review_page.py
+    Handles saved-output review only
+```
+
 ---
 
-## How to Run Analysis Directly
+## How to Run Analysis
+
+### Run analysis from the GUI
+
+Start the GUI:
+
+```bash
+cd /workspace/tcubed/project/jetson
+
+python3 gui/gui.py
+```
+
+Then:
+
+```text
+Open Analysis page
+↓
+Select a recording from the dropdown
+↓
+Click Start Analysis
+↓
+Wait for completion
+↓
+Open Review page to view generated heatmap
+```
+
+### Run analysis directly from the terminal
 
 ```bash
 cd /workspace/tcubed/project/jetson
@@ -302,131 +394,159 @@ cd /workspace/tcubed/project/jetson
 python3 analysis/analysis.py
 ```
 
-This runs the analysis pipeline directly using the default recording path configured in:
+This uses the default recording path configured in:
 
 ```text
 analysis/analysis_config.py
 ```
 
----
+### Expected analysis outputs
 
-## How to Test STM32 Serial Commands
-
-Dry-run examples:
-
-```bash
-cd /workspace/tcubed/project/jetson
-
-python3 comm/serial_direct_test.py --setting 75 1500 10
-python3 comm/serial_direct_test.py --start
-python3 comm/serial_direct_test.py --stop
-```
-
-Real-send examples:
-
-```bash
-python3 comm/serial_direct_test.py --setting 75 1500 10 --send
-python3 comm/serial_direct_test.py --start --send
-python3 comm/serial_direct_test.py --stop --send
-```
-
-The Training Controller can also send STM32 commands through the GUI when real serial sending is enabled in:
+Annotated videos are saved to:
 
 ```text
-controller/training_controller_config.py
+review/annotated/
 ```
 
----
-
-## Development Rules
-
-This project follows an incremental development workflow.
-
-For every new feature:
+Heatmap images are saved to:
 
 ```text
-Build the module
-↓
-Test the module directly
-↓
-Integrate with controller or pipeline
-↓
-Test the full workflow
-↓
-Then move to the next feature
+review/heatmaps/
 ```
 
-Important design rules:
+Future JSON results are expected in:
 
-* Do not put YOLO logic directly inside GUI files.
-* Do not put GStreamer recording logic directly inside GUI files.
-* Do not put serial communication directly inside GUI files.
-* Keep controllers responsible for workflow coordination.
-* Keep functional modules focused and independently testable.
-* Optional outputs such as annotation and heatmaps should not break core analysis.
+```text
+json_results/
+```
+
+Example outputs:
+
+```text
+review/annotated/annotate_sample_001.mkv
+review/heatmaps/heatmap_sample_001.png
+```
 
 ---
 
 ## Current Limitations
 
-Known limitations:
+Current known limitations:
 
-* Training recording is not fully connected yet.
-* Camera preview is not fully connected yet.
-* Table detection preview overlay is not implemented yet.
-* STM32 response listening and automatic COMPLETE detection still need improvement.
+* Training page recording is not fully connected yet.
+* Low-FPS camera preview is not fully connected yet.
+* Table detection overlay during preview is not implemented yet.
+* STM32 serial sending works, but response listening still needs improvement.
+* Automatic STM32 `COMPLETE` detection is not fully integrated yet.
+* Recording start/stop placeholders still need to be replaced with real GStreamer recording calls.
 * JSON result export is planned but not fully finalized.
-* Analysis accuracy depends on table detection quality, ball tracking stability, and bounce filtering.
+* Review page currently focuses on heatmap preview only.
+* Review page does not yet group heatmaps, annotated videos, and JSON results by session.
+* Analysis accuracy depends on:
+
+  * table corner detection quality
+  * homography stability
+  * ball tracking stability
+  * bounce detection thresholds
+* Bounce detection may miss events if the ball is blurred, occluded, or lost near the table.
+* False bounce detections may occur if ball tracking jumps between detections.
+* Current validation is mostly visual through annotated video and heatmap review.
 
 ---
 
-## Next Development Steps
+## Future Work
 
-Recommended next steps:
+Recommended next development steps:
 
-1. Finish STM32 response listening.
-2. Detect `COMPLETE` automatically from STM32.
-3. Connect real GStreamer recording to the Training Controller.
-4. Add low-FPS camera preview to the Training page.
-5. Add table detection overlay to preview.
-6. Improve JSON result export.
-7. Expand Review page with annotated video and statistics.
+### Training Workflow
+
+* Add STM32 response listener.
+* Detect `ACK:SETTING`, `ACK:START`, and `ACK:STOP` if used.
+* Detect `COMPLETE` automatically from STM32.
+* Connect real GStreamer recording to the Training Controller.
+* Add idempotent recording stop behavior.
+* Add low-FPS camera preview.
+* Add table detection overlay during preview.
+* Make new recordings automatically appear in the Analysis page.
+
+### Analysis Workflow
+
+* Improve `run_analysis()` return dictionary.
+* Return output paths to the GUI.
+* Add richer JSON result export.
+* Save accepted and rejected bounce data.
+* Improve bounce validation and filtering.
+* Add quantitative evaluation metrics.
+* Improve homography reliability and reporting.
+
+### Review Workflow
+
+* Add annotated video dropdown.
+* Add JSON result dropdown.
+* Group outputs by recording/session name.
+* Show bounce count, mapped count, and rejected count.
+* Show basic placement statistics.
+* Generate simple training feedback text.
+* Add option to open output folders.
+
+### Documentation
+
+* Keep Mermaid architecture diagrams updated.
+* Add module responsibility documentation.
+* Add setup/troubleshooting documentation.
+* Add direct test instructions for each major module.
+* Add capstone report diagrams and explanation sections.
 
 ---
 
 ## Documentation
 
-Additional documentation should be stored in:
+Project documentation is stored in:
 
 ```text
 docs/
 ```
 
-Planned documentation files:
+Current documentation files:
 
 ```text
 docs/software_architecture.md
-docs/gui_flow.md
-docs/analysis_pipeline.md
 docs/training_workflow.md
-docs/module_responsibilities.md
+docs/analysis_pipeline.md
+docs/review_workflow.md
 ```
 
-The software architecture flowchart should be added using Mermaid diagrams in Markdown.
+These files use Mermaid diagrams to show the system architecture and workflow flowcharts.
+
+To preview Mermaid diagrams:
+
+* Open the Markdown file in VS Code.
+* Use Markdown Preview.
+* Or view the file on GitHub after pushing.
 
 ---
 
-## Project Summary
+## Summary
 
-T-Cubed is a modular table-tennis training assistant that combines computer vision, embedded control, and a user-facing GUI.
-
-The system is designed to remain useful even if some features fail. For example:
+T-Cubed is a modular table-tennis training assistant that combines:
 
 ```text
-If Review output fails, analysis data can still exist.
-If heatmap generation fails, bounce detection can still be checked.
-If STM32 communication fails, recorded video analysis can still work.
-If camera preview fails, training recording can still be developed separately.
+Computer vision
+Embedded STM32 control
+High-FPS video recording
+Tkinter GUI workflows
+Saved visual review outputs
 ```
 
-This modular design makes the project easier to debug, explain, and extend.
+The system is intentionally built in small, testable layers.
+
+The goal is for each part to remain useful even if another part is incomplete:
+
+```text
+If STM32 control is not ready, recorded video analysis can still be tested.
+If Review is basic, heatmaps and annotated videos can still be inspected.
+If camera preview is not ready, high-FPS recording can still be developed.
+If annotation fails, the core bounce detection data can still be useful.
+```
+
+This modular design makes the project easier to debug, explain, and extend for the final capstone.
