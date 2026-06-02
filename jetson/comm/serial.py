@@ -24,18 +24,18 @@ Current supported messages:
     STOP\\n
         Stops the STM32 training / launcher behavior.
 
-    SETTING:<ballspeed>:<rate>:<number_of_shots>\\n
+    SETTINGS:<ballspeed>:<rate>:<number_of_shots>\\n
         Sends launcher/training settings to the STM32.
 
         Example:
-            SETTING:75:1.5:10\\n
+            SETTINGS:75:1500:10\\n
 
         Meaning:
             ballspeed       = 75
-            rate            = 1.5
+            rate            = 1500
             number_of_shots = 10
 
-Square brackets like [START] or [SETTING:75:1.5:10] are only used in
+Square brackets like [START] or [SETTINGS:75:1500:10] are only used in
 documentation to highlight the message. They are not sent over serial.
 
 Future expansion
@@ -361,7 +361,7 @@ def normalize_positive_number_text(value, field_name, minimum_value):
 
     This is used for:
     - ballspeed
-    - rate
+    - rate / pace milliseconds
     """
 
     value_text = validate_protocol_field(
@@ -496,40 +496,46 @@ def build_stop_message():
 
 def build_setting_message(ballspeed, rate, number_of_shots):
     """
-    Build the SETTING message.
+    Build the SETTINGS message.
 
     Message structure:
-        SETTING:<ballspeed>:<rate>:<number_of_shots>\\n
+        SETTINGS:<ballspeed>:<rate>:<number_of_shots>\\n
 
     Example:
-        SETTING:75:1.5:10\\n
+        SETTINGS:75:1500:10\\n
 
     Meaning:
         ballspeed       = 75
-        rate            = 1.5
+        rate            = 1500
         number_of_shots = 10
+
+    Note:
+        The function name is kept as build_setting_message()
+        so existing controller/direct-test code does not need to change.
+
+        The actual command sent over serial is SETTINGS.
     """
 
     ballspeed_text = normalize_positive_number_text(
         value=ballspeed,
-        field_name=serial_config.SETTING_BALLSPEED_FIELD_NAME,
+        field_name=serial_config.SETTINGS_BALLSPEED_FIELD_NAME,
         minimum_value=serial_config.MIN_BALLSPEED,
     )
 
     rate_text = normalize_positive_number_text(
         value=rate,
-        field_name=serial_config.SETTING_RATE_FIELD_NAME,
+        field_name=serial_config.SETTINGS_RATE_FIELD_NAME,
         minimum_value=serial_config.MIN_RATE,
     )
 
     number_of_shots_text = normalize_positive_integer_text(
         value=number_of_shots,
-        field_name=serial_config.SETTING_NUMBER_OF_SHOTS_FIELD_NAME,
+        field_name=serial_config.SETTINGS_NUMBER_OF_SHOTS_FIELD_NAME,
         minimum_value=serial_config.MIN_NUMBER_OF_SHOTS,
     )
 
     return build_protocol_message(
-        command_name=serial_config.COMMAND_SETTING,
+        command_name=serial_config.COMMAND_SETTINGS,
         field_values=[
             ballspeed_text,
             rate_text,
@@ -642,12 +648,27 @@ def send_stop_command(device_path=None, baud_rate=None):
     )
 
 
-def send_setting_command(ballspeed, rate, number_of_shots, device_path=None, baud_rate=None):
+def send_setting_command(
+    ballspeed,
+    rate,
+    number_of_shots,
+    device_path=None,
+    baud_rate=None,
+):
     """
-    Send SETTING command to the STM32.
+    Send SETTINGS command to the STM32.
 
     Message structure:
-        SETTING:<ballspeed>:<rate>:<number_of_shots>\\n
+        SETTINGS:<ballspeed>:<rate>:<number_of_shots>\\n
+
+    Example:
+        SETTINGS:75:1500:10\\n
+
+    Note:
+        The function name is kept as send_setting_command()
+        so existing controller/direct-test code does not need to change.
+
+        The actual command sent over serial is SETTINGS.
     """
 
     message = build_setting_message(
@@ -674,7 +695,7 @@ def read_available_response(file_descriptor, max_bytes=256):
     This is optional for now. Later the STM32 can send ACK messages such as:
         ACK:START
         ACK:STOP
-        ACK:SETTING
+        ACK:SETTINGS
     """
 
     try:

@@ -56,7 +56,7 @@ MESSAGE_TERMINATOR = "\n"
 # Fields inside a message are separated by this delimiter.
 #
 # Example:
-#     SETTING:75:1.5:10
+#     SETTINGS:75:1500:10
 FIELD_DELIMITER = ":"
 
 
@@ -66,38 +66,70 @@ FIELD_DELIMITER = ":"
 
 COMMAND_START = "START"
 COMMAND_STOP = "STOP"
-COMMAND_SETTING = "SETTING"
+
+# IMPORTANT:
+# The STM32 settings command is plural:
+#
+#     SETTINGS:<ballspeed>:<rate>:<number_of_shots>\n
+#
+# Example:
+#
+#     SETTINGS:75:1500:10\n
+#
+# Keep the Python helper/function names as "setting" if desired,
+# but the actual message command sent over serial should be "SETTINGS".
+COMMAND_SETTINGS = "SETTINGS"
+
+# Backward-compatible alias.
+# This prevents older code that still references COMMAND_SETTING
+# from crashing, but it will still send "SETTINGS".
+COMMAND_SETTING = COMMAND_SETTINGS
 
 VALID_PROTOCOL_COMMANDS = [
     COMMAND_START,
     COMMAND_STOP,
-    COMMAND_SETTING,
+    COMMAND_SETTINGS,
 ]
 
 
 # ============================================================
-# SETTING message structure
+# SETTINGS message structure
 # ============================================================
 
-# The SETTING message has this structure:
+# The SETTINGS message has this structure:
 #
-#     SETTING:<ballspeed>:<rate>:<number_of_shots>\n
+#     SETTINGS:<ballspeed>:<rate>:<number_of_shots>\n
 #
 # Example:
 #
-#     SETTING:75:1.5:10\n
+#     SETTINGS:75:1500:10\n
 #
 # Meaning:
 #
 #     ballspeed       = 75
-#     rate            = 1.5
+#     rate            = 1500
 #     number_of_shots = 10
+#
+# In the Training GUI:
+#     pace is shown to the user in seconds.
+#
+# In the STM32 message:
+#     pace/rate is sent in milliseconds.
 
-SETTING_FIELD_COUNT = 3
+SETTINGS_FIELD_COUNT = 3
 
-SETTING_BALLSPEED_FIELD_NAME = "ballspeed"
-SETTING_RATE_FIELD_NAME = "rate"
-SETTING_NUMBER_OF_SHOTS_FIELD_NAME = "number_of_shots"
+SETTINGS_BALLSPEED_FIELD_NAME = "ballspeed"
+SETTINGS_RATE_FIELD_NAME = "rate"
+SETTINGS_NUMBER_OF_SHOTS_FIELD_NAME = "number_of_shots"
+
+# Backward-compatible aliases.
+# These prevent older serial.py code from breaking if it still uses
+# the old singular SETTING_* constant names.
+SETTING_FIELD_COUNT = SETTINGS_FIELD_COUNT
+
+SETTING_BALLSPEED_FIELD_NAME = SETTINGS_BALLSPEED_FIELD_NAME
+SETTING_RATE_FIELD_NAME = SETTINGS_RATE_FIELD_NAME
+SETTING_NUMBER_OF_SHOTS_FIELD_NAME = SETTINGS_NUMBER_OF_SHOTS_FIELD_NAME
 
 
 # ============================================================
