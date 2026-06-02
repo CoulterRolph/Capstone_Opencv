@@ -5,6 +5,7 @@ Training page for the table-tennis training assistant GUI.
 
 This page is responsible for:
 - Displaying training settings controls
+- Displaying live camera preview frames from TrainingController
 - Displaying preview/table-detection status placeholders
 - Calling TrainingController methods
 - Polling controller messages safely from the Tkinter thread
@@ -24,10 +25,10 @@ Those responsibilities belong in controller/modules.
 # Imports
 # ============================================================
 
+from pathlib import Path
 import sys
 import tkinter as tk
 from tkinter import messagebox
-from pathlib import Path
 
 
 # ============================================================
@@ -99,6 +100,21 @@ NAVIGATION_PAGE_NAME = get_config_value("NAVIGATION_PAGE_NAME", "navigation")
 
 QUEUE_POLL_INTERVAL_MS = get_config_value("QUEUE_POLL_INTERVAL_MS", 100)
 
+PREVIEW_FRAME_POLL_INTERVAL_MS = get_config_value(
+    "PREVIEW_FRAME_POLL_INTERVAL_MS",
+    100,
+)
+
+PREVIEW_DISPLAY_MAX_WIDTH = get_config_value(
+    "PREVIEW_DISPLAY_MAX_WIDTH",
+    420,
+)
+
+PREVIEW_DISPLAY_MAX_HEIGHT = get_config_value(
+    "PREVIEW_DISPLAY_MAX_HEIGHT",
+    240,
+)
+
 
 # ============================================================
 # Training page
@@ -130,15 +146,25 @@ class TrainingPage(tk.Frame):
         self.table_detection_status_label = None
         self.session_status_label = None
 
+        self.preview_image_label = None
+        self.preview_photo_image = None
+
         self.start_preview_button = None
         self.stop_preview_button = None
         self.start_training_button = None
         self.stop_training_button = None
         self.back_button = None
 
+        self.preview_placeholder_text = (
+            "Preview stopped\n\n"
+            "Click Start Preview to show\n"
+            "the live camera feed."
+        )
+
         self._build_page()
         self._set_idle_button_state()
         self._poll_controller_messages()
+        self._poll_preview_frame()
 
     # ========================================================
     # Page construction
@@ -375,7 +401,7 @@ class TrainingPage(tk.Frame):
 
     def _build_preview_card(self, parent):
         """
-        Build the camera preview placeholder card.
+        Build the live camera preview card.
         """
 
         preview_card = tk.Frame(
@@ -406,7 +432,7 @@ class TrainingPage(tk.Frame):
         preview_box = tk.Frame(
             preview_card,
             bg="#d1d5db",
-            height=240,
+            height=260,
         )
         preview_box.pack(
             fill="both",
@@ -414,15 +440,15 @@ class TrainingPage(tk.Frame):
         )
         preview_box.pack_propagate(False)
 
-        preview_text = tk.Label(
+        self.preview_image_label = tk.Label(
             preview_box,
-            text="Preview placeholder\n\nFuture: low-FPS camera feed\nwith table detection overlay",
+            text=self.preview_placeholder_text,
             font=NORMAL_FONT,
             fg=TEXT_DARK_COLOR,
             bg="#d1d5db",
             justify="center",
         )
-        preview_text.pack(
+        self.preview_image_label.pack(
             expand=True,
         )
 
@@ -583,7 +609,7 @@ class TrainingPage(tk.Frame):
 
     def _on_start_preview_clicked(self):
         """
-        Ask the controller to start the preview placeholder.
+        Ask the controller to start the real camera preview.
         """
 
         try:
@@ -598,12 +624,13 @@ class TrainingPage(tk.Frame):
 
     def _on_stop_preview_clicked(self):
         """
-        Ask the controller to stop the preview placeholder.
+        Ask the controller to stop the real camera preview.
         """
 
         try:
             self.training_controller.stop_preview()
             self._set_idle_button_state()
+            self._reset_preview_display_placeholder()
 
         except Exception as error:
             self._show_error_message(
@@ -631,6 +658,7 @@ class TrainingPage(tk.Frame):
             )
 
             self._set_training_button_state()
+            self._reset_preview_display_placeholder()
 
         except Exception as error:
             self._set_error_status(str(error))
@@ -667,6 +695,10 @@ class TrainingPage(tk.Frame):
                 "Stop the training session before returning home.",
             )
             return
+
+        if self._is_preview_running():
+            self.training_controller.stop_preview()
+            self._reset_preview_display_placeholder()
 
         self.page_manager.show_page(
             NAVIGATION_PAGE_NAME,
@@ -784,17 +816,30 @@ class TrainingPage(tk.Frame):
         """
         Update preview/table labels from simple controller status text.
 
-        This is placeholder-friendly. Later, preview.py can send richer messages.
+        Later, preview.py can send richer messages for table detection.
         """
 
         lowered_message = message_text.lower()
 
-        if "preview started" in lowered_message:
+        if "starting camera preview" in lowered_message:
+            self.preview_status_label.config(
+                text="Preview: starting",
+            )
+            self.table_detection_status_label.config(
+                text="Table detection: not running",
+            )
+
+        elif "preview started" in lowered_message:
             self.preview_status_label.config(
                 text="Preview: running",
             )
             self.table_detection_status_label.config(
                 text="Table detection: placeholder only",
+            )
+
+        elif "stopping camera preview" in lowered_message:
+            self.preview_status_label.config(
+                text="Preview: stopping",
             )
 
         elif "preview stopped" in lowered_message:
@@ -804,6 +849,7 @@ class TrainingPage(tk.Frame):
             self.table_detection_status_label.config(
                 text="Table detection: not running",
             )
+            self._reset_preview_display_placeholder()
 
         elif "training started" in lowered_message:
             self.preview_status_label.config(
@@ -812,6 +858,7 @@ class TrainingPage(tk.Frame):
             self.table_detection_status_label.config(
                 text="Table detection: not blocking training",
             )
+            self._reset_preview_display_placeholder()
 
         elif "complete" in lowered_message:
             self.preview_status_label.config(
@@ -820,6 +867,155 @@ class TrainingPage(tk.Frame):
             self.table_detection_status_label.config(
                 text="Table detection: not running",
             )
+            self._reset_preview_display_placeholder()
+
+    # ========================================================
+    # Preview frame polling
+    # ========================================================
+
+    def _poll_preview_frame(self):
+        """
+        Poll the latest preview frame from the controller.
+
+        This runs on the Tkinter thread and only displays the latest frame.
+        The camera reading thread lives inside capture/preview.py.
+        """
+
+        self._update_preview_frame_if_available()
+
+        self.after(
+            PREVIEW_FRAME_POLL_INTERVAL_MS,
+            self._poll_preview_frame,
+        )
+
+    def _update_preview_frame_if_available(self):
+        """
+        Pull the latest RGB preview frame from the controller and display it.
+        """
+
+        if self.preview_image_label is None:
+            return
+
+        if not self._is_preview_running():
+            return
+
+        if not hasattr(self.training_controller, "get_latest_preview_frame_rgb"):
+            return
+
+        frame_rgb = self.training_controller.get_latest_preview_frame_rgb()
+
+        if frame_rgb is None:
+            self.preview_image_label.config(
+                image="",
+                text="Waiting for camera frame...",
+            )
+            self.preview_photo_image = None
+            return
+
+        try:
+            photo_image = self._create_photo_image_from_rgb_frame(
+                frame_rgb,
+            )
+
+        except Exception as error:
+            self.preview_image_label.config(
+                image="",
+                text=f"Preview display error:\n{error}",
+            )
+            self.preview_photo_image = None
+            return
+
+        self.preview_photo_image = photo_image
+
+        self.preview_image_label.config(
+            image=self.preview_photo_image,
+            text="",
+        )
+
+    def _create_photo_image_from_rgb_frame(self, frame_rgb):
+        """
+        Convert an RGB numpy frame into a Tkinter PhotoImage.
+
+        This avoids using Pillow. The numpy RGB bytes are wrapped as a
+        binary PPM image, which Tkinter can load directly.
+        """
+
+        if frame_rgb is None:
+            raise ValueError("Frame is None.")
+
+        if not hasattr(frame_rgb, "shape"):
+            raise ValueError("Frame does not have a shape attribute.")
+
+        if len(frame_rgb.shape) != 3:
+            raise ValueError(f"Expected HxWxC frame. Got shape: {frame_rgb.shape}")
+
+        height, width, channels = frame_rgb.shape
+
+        if channels < 3:
+            raise ValueError(f"Expected at least 3 channels. Got: {channels}")
+
+        rgb_frame_3_channel = frame_rgb[:, :, :3]
+
+        ppm_header = f"P6\n{width} {height}\n255\n".encode("ascii")
+        ppm_data = ppm_header + rgb_frame_3_channel.tobytes()
+
+        photo_image = tk.PhotoImage(
+            data=ppm_data,
+            format="PPM",
+        )
+
+        subsample_factor = self._calculate_preview_subsample_factor(
+            image_width=width,
+            image_height=height,
+        )
+
+        if subsample_factor > 1:
+            photo_image = photo_image.subsample(
+                subsample_factor,
+                subsample_factor,
+            )
+
+        return photo_image
+
+    def _calculate_preview_subsample_factor(self, image_width, image_height):
+        """
+        Calculate an integer subsample factor so the frame fits the card.
+        """
+
+        if PREVIEW_DISPLAY_MAX_WIDTH <= 0 or PREVIEW_DISPLAY_MAX_HEIGHT <= 0:
+            return 1
+
+        width_factor = max(
+            1,
+            (int(image_width) + PREVIEW_DISPLAY_MAX_WIDTH - 1)
+            // PREVIEW_DISPLAY_MAX_WIDTH,
+        )
+
+        height_factor = max(
+            1,
+            (int(image_height) + PREVIEW_DISPLAY_MAX_HEIGHT - 1)
+            // PREVIEW_DISPLAY_MAX_HEIGHT,
+        )
+
+        return max(
+            width_factor,
+            height_factor,
+        )
+
+    def _reset_preview_display_placeholder(self):
+        """
+        Clear the image and show the preview placeholder text.
+        """
+
+        if self.preview_image_label is None:
+            return
+
+        self.preview_photo_image = None
+
+        self.preview_image_label.config(
+            image="",
+            text=self.preview_placeholder_text,
+        )
 
     # ========================================================
     # State helpers
@@ -857,6 +1053,18 @@ class TrainingPage(tk.Frame):
             "STOPPING",
         }
 
+    def _is_preview_running(self):
+        """
+        Decide whether preview is running.
+        """
+
+        if hasattr(self.training_controller, "is_preview_running"):
+            return self.training_controller.is_preview_running()
+
+        state = str(self._get_controller_state()).upper()
+
+        return state == "PREVIEWING"
+
     def _sync_buttons_with_controller_state(self):
         """
         Keep button states aligned with the controller state.
@@ -867,8 +1075,15 @@ class TrainingPage(tk.Frame):
         if state == "PREVIEWING":
             self._set_previewing_button_state()
 
-        elif state in {"STARTING", "TRAINING", "STOPPING"}:
+        elif state in {
+            "STARTING",
+            "TRAINING",
+            "STOPPING",
+        }:
             self._set_training_button_state()
+
+        elif state == "COMPLETE":
+            self._set_complete_button_state()
 
         elif state == "ERROR":
             self._set_error_button_state()
@@ -882,7 +1097,7 @@ class TrainingPage(tk.Frame):
 
     def _set_idle_button_state(self):
         """
-        Button states when nothing is actively running.
+        Button state for idle mode.
         """
 
         self._set_button_state(self.start_preview_button, "normal")
@@ -893,7 +1108,7 @@ class TrainingPage(tk.Frame):
 
     def _set_previewing_button_state(self):
         """
-        Button states while preview is running.
+        Button state while preview is running.
         """
 
         self._set_button_state(self.start_preview_button, "disabled")
@@ -904,7 +1119,7 @@ class TrainingPage(tk.Frame):
 
     def _set_training_button_state(self):
         """
-        Button states while training is starting/running/stopping.
+        Button state while training is running.
         """
 
         self._set_button_state(self.start_preview_button, "disabled")
@@ -915,17 +1130,25 @@ class TrainingPage(tk.Frame):
 
     def _set_complete_button_state(self):
         """
-        Button states after training completes normally.
+        Button state after training completes.
         """
 
-        self._set_idle_button_state()
+        self._set_button_state(self.start_preview_button, "normal")
+        self._set_button_state(self.stop_preview_button, "disabled")
+        self._set_button_state(self.start_training_button, "normal")
+        self._set_button_state(self.stop_training_button, "disabled")
+        self._set_button_state(self.back_button, "normal")
 
     def _set_error_button_state(self):
         """
-        Button states after an error.
+        Button state after an error.
         """
 
-        self._set_idle_button_state()
+        self._set_button_state(self.start_preview_button, "normal")
+        self._set_button_state(self.stop_preview_button, "normal")
+        self._set_button_state(self.start_training_button, "normal")
+        self._set_button_state(self.stop_training_button, "normal")
+        self._set_button_state(self.back_button, "normal")
 
     def _set_button_state(self, button, state):
         """
@@ -943,11 +1166,11 @@ class TrainingPage(tk.Frame):
 
     def _set_status_message(self, message, color):
         """
-        Update the bottom status label.
+        Update the session status label.
         """
 
-        if not message:
-            message = "Idle"
+        if self.session_status_label is None:
+            return
 
         self.session_status_label.config(
             text=f"Status: {message}",
@@ -956,7 +1179,7 @@ class TrainingPage(tk.Frame):
 
     def _set_error_status(self, message):
         """
-        Convenience helper for error status messages.
+        Update the status label with an error.
         """
 
         self._set_status_message(
@@ -966,51 +1189,10 @@ class TrainingPage(tk.Frame):
 
     def _show_error_message(self, title, message):
         """
-        Show an error popup.
+        Show a Tkinter error popup.
         """
 
         messagebox.showerror(
             title,
             message,
         )
-
-
-# ============================================================
-# Direct test support
-# ============================================================
-
-class _DirectTestPageManager:
-    """
-    Tiny page manager used only when testing this page directly.
-    """
-
-    def show_page(self, page_name):
-        print(f"Direct test page switch requested: {page_name}")
-
-
-def run_training_page_direct_test():
-    """
-    Run this page by itself for quick GUI testing.
-
-    Command:
-        python3 gui/training_page.py
-    """
-
-    root = tk.Tk()
-    root.title("Training Page Direct Test")
-    root.geometry("1024x768")
-
-    page = TrainingPage(
-        parent=root,
-        page_manager=_DirectTestPageManager(),
-    )
-    page.pack(
-        fill="both",
-        expand=True,
-    )
-
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    run_training_page_direct_test()

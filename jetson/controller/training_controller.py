@@ -7,7 +7,7 @@ Current scope:
 - Validate training settings.
 - Convert pace from seconds to milliseconds.
 - Track preview/training state.
-- Simulate Start Preview / Stop Preview.
+- Start/stop low-FPS camera preview through capture/preview.py.
 - Coordinate STM32 SETTING / START / STOP.
 - Keep dry-run mode available by config.
 - Simulate recording start / stop placeholders.
@@ -16,7 +16,8 @@ Current scope:
 Future scope:
 - Read STM32 response strings from a listener thread.
 - Start/stop high-FPS GStreamer/MKV recording.
-- Start/stop low-FPS camera preview.
+- Display preview frames in the GUI.
+- Add table-detection overlay to preview.
 - Stop recording automatically when STM32 sends COMPLETE.
 
 Important:
@@ -36,6 +37,7 @@ from pathlib import Path
 import importlib.util
 import queue
 import sys
+import time
 
 
 # ============================================================
@@ -50,11 +52,13 @@ import sys
 CONTROLLER_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CONTROLLER_DIR.parent
 COMM_DIR = PROJECT_ROOT / "comm"
+CAPTURE_DIR = PROJECT_ROOT / "capture"
 
 paths_to_add = [
     CONTROLLER_DIR,
     PROJECT_ROOT,
     COMM_DIR,
+    CAPTURE_DIR,
 ]
 
 for path_to_add in paths_to_add:
@@ -67,7 +71,30 @@ for path_to_add in paths_to_add:
         )
 
 
+# ============================================================
+# Local imports
+# ============================================================
+
 import training_controller_config
+
+
+# ============================================================
+# Config fallback helpers
+# ============================================================
+
+def get_controller_config_value(name, default_value):
+    """
+    Read a value from training_controller_config.py if it exists.
+
+    This keeps the controller slightly more robust while config values are
+    still being added during incremental development.
+    """
+
+    return getattr(
+        training_controller_config,
+        name,
+        default_value,
+    )
 
 
 # ============================================================
@@ -124,7 +151,7 @@ class TrainingController:
     The GUI should call this class instead of directly handling:
     - recording
     - STM32 serial communication
-    - camera preview
+    - camera preview internals
     - table detection preview
     """
 
@@ -142,6 +169,11 @@ class TrainingController:
         self.last_stm32_response = None
 
         self._stm32_serial_module = None
+        self._preview_module = None
+        self.preview_service = None
+
+        self.recording_module = None
+        self.recorder = None
 
     # --------------------------------------------------------
     # Public state helpers
@@ -202,6 +234,46 @@ class TrainingController:
 
         except queue.Empty:
             return None
+
+    def get_latest_preview_frame_rgb(self):
+        """
+        Return the latest RGB preview frame from the preview service.
+
+        Returns:
+            numpy array if a frame is available.
+            None if preview is not running or no frame is available yet.
+        """
+
+        if self.preview_service is None:
+            return None
+
+        if not hasattr(self.preview_service, "get_latest_frame_rgb"):
+            return None
+
+        return self.preview_service.get_latest_frame_rgb()
+
+    def get_preview_status(self):
+        """
+        Return preview service status if available.
+        """
+
+        if self.preview_service is None:
+            return {
+                "is_running": False,
+                "frame_count": 0,
+                "latest_frame_timestamp": None,
+                "last_error_message": None,
+            }
+
+        if not hasattr(self.preview_service, "get_status"):
+            return {
+                "is_running": False,
+                "frame_count": 0,
+                "latest_frame_timestamp": None,
+                "last_error_message": "Preview service has no get_status().",
+            }
+
+        return self.preview_service.get_status()
 
     # --------------------------------------------------------
     # Settings validation
@@ -325,17 +397,38 @@ class TrainingController:
 
     def start_preview(self):
         """
-        Start preview placeholder.
+        Start low-FPS camera preview.
 
-        Future:
-        - Open low-FPS camera stream.
-        - Send frames to GUI.
-        - Periodically run table detection.
+        The preview is for camera/table setup only.
+        It is not the high-FPS training recording path.
         """
 
         if self.is_training_running():
             self._put_warning_message(
                 "Cannot start preview while training is running.",
+            )
+
+            return False
+
+        if self.is_preview_running():
+            self._put_status_message(
+                "Preview is already running.",
+            )
+
+            return True
+
+        try:
+            self._put_status_message(
+                "Starting camera preview...",
+            )
+
+            self._start_camera_preview_service()
+
+        except Exception as error:
+            self.state = training_controller_config.STATE_ERROR
+
+            self._put_error_message(
+                f"Preview failed to start: {error}",
             )
 
             return False
@@ -350,21 +443,38 @@ class TrainingController:
 
     def stop_preview(self):
         """
-        Stop preview placeholder.
+        Stop low-FPS camera preview and release the camera.
 
-        Future:
-        - Stop OpenCV preview loop.
-        - Release /dev/video0.
+        This is safe to call more than once.
         """
 
-        if not self.is_preview_running():
+        preview_is_running = self.is_preview_running()
+
+        if self.preview_service is None and not preview_is_running:
             self._put_status_message(
                 "Preview is not running.",
             )
 
             return True
 
-        self.state = training_controller_config.STATE_IDLE
+        try:
+            self._put_status_message(
+                "Stopping camera preview...",
+            )
+
+            self._stop_camera_preview_service()
+
+        except Exception as error:
+            self.state = training_controller_config.STATE_ERROR
+
+            self._put_error_message(
+                f"Preview failed to stop: {error}",
+            )
+
+            return False
+
+        if preview_is_running:
+            self.state = training_controller_config.STATE_IDLE
 
         self._put_status_message(
             training_controller_config.STATUS_PREVIEW_STOPPED,
@@ -449,7 +559,12 @@ class TrainingController:
                 training_controller_config.STATUS_STM32_SETTING_STEP_COMPLETE,
             )
 
-            self._start_recording_placeholder()
+            recording_started = self._start_training_recording()
+
+            if not recording_started:
+                self.state = training_controller_config.STATE_ERROR
+
+                return False
 
             self._put_status_message(
                 training_controller_config.STATUS_STM32_SENDING_START,
@@ -513,7 +628,7 @@ class TrainingController:
                 training_controller_config.STATUS_STM32_STOP_STEP_COMPLETE,
             )
 
-            self._stop_recording_placeholder()
+            self._stop_training_recording()
 
         except Exception as error:
             self.state = training_controller_config.STATE_ERROR
@@ -612,11 +727,295 @@ class TrainingController:
             "STM32 COMPLETE received.",
         )
 
-        self._stop_recording_placeholder()
+        self._stop_training_recording()
 
         self._put_complete_message(
             training_controller_config.STATUS_TRAINING_COMPLETE,
         )
+
+    # --------------------------------------------------------
+    # Camera preview module loading
+    # --------------------------------------------------------
+
+    def _load_preview_module(self):
+        """
+        Load project/jetson/capture/preview.py directly.
+
+        This avoids requiring capture/ to be a formal Python package.
+        """
+
+        if self._preview_module is not None:
+            return self._preview_module
+
+        preview_module_relative_path = get_controller_config_value(
+            "PREVIEW_MODULE_RELATIVE_PATH",
+            "capture/preview.py",
+        )
+
+        preview_module_path = PROJECT_ROOT / preview_module_relative_path
+
+        if not preview_module_path.exists():
+            raise FileNotFoundError(
+                f"Preview module not found: {preview_module_path}"
+            )
+
+        module_spec = importlib.util.spec_from_file_location(
+            "tcubed_camera_preview",
+            preview_module_path,
+        )
+
+        if module_spec is None:
+            raise RuntimeError(
+                f"Could not create import spec for: {preview_module_path}"
+            )
+
+        if module_spec.loader is None:
+            raise RuntimeError(
+                f"Could not load preview module from: {preview_module_path}"
+            )
+
+        preview_module = importlib.util.module_from_spec(
+            module_spec,
+        )
+
+        module_spec.loader.exec_module(
+            preview_module,
+        )
+
+        self._preview_module = preview_module
+
+        return self._preview_module
+
+    def _create_preview_service_if_needed(self):
+        """
+        Create the CameraPreviewService object if it does not already exist.
+        """
+
+        if self.preview_service is not None:
+            return self.preview_service
+
+        preview_module = self._load_preview_module()
+
+        if not hasattr(preview_module, "CameraPreviewService"):
+            raise RuntimeError(
+                "capture/preview.py does not provide CameraPreviewService."
+            )
+
+        self.preview_service = preview_module.CameraPreviewService()
+
+        return self.preview_service
+
+    def _start_camera_preview_service(self):
+        """
+        Start the actual camera preview service.
+        """
+
+        preview_service = self._create_preview_service_if_needed()
+
+        preview_service.start_preview()
+
+    def _stop_camera_preview_service(self):
+        """
+        Stop the actual camera preview service.
+        """
+
+        if self.preview_service is None:
+            return
+
+        preview_service = self.preview_service
+
+        if hasattr(preview_service, "stop_preview"):
+            preview_service.stop_preview()
+
+        self.preview_service = None
+    
+    def _load_recording_module(self):
+        """
+        Load capture/recording.py directly.
+
+        This avoids requiring capture/ to be a Python package.
+        It also makes sure recording_config.py can be imported by recording.py.
+        """
+
+        if self.recording_module is not None:
+            return self.recording_module
+
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        controller_dir = Path(__file__).resolve().parent
+        project_root = controller_dir.parent
+
+        recording_module_relative_path = get_controller_config_value(
+            "RECORDING_MODULE_RELATIVE_PATH",
+            "capture/recording.py",
+        )
+
+        recording_module_path = (
+            project_root / recording_module_relative_path
+        ).resolve()
+
+        if not recording_module_path.exists():
+            raise FileNotFoundError(
+                f"Recording module not found: {recording_module_path}"
+            )
+
+        recording_dir = recording_module_path.parent
+
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
+        if str(recording_dir) not in sys.path:
+            sys.path.insert(0, str(recording_dir))
+
+        spec = importlib.util.spec_from_file_location(
+            "tcubed_recording_module",
+            recording_module_path,
+        )
+
+        if spec is None or spec.loader is None:
+            raise RuntimeError(
+                f"Could not load recording module from: {recording_module_path}"
+            )
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        self.recording_module = module
+
+        return self.recording_module
+
+    def _get_recorder(self):
+        """
+        Create or return the existing MjpegRecorder instance.
+        """
+
+        if self.recorder is not None:
+            return self.recorder
+
+        recording_module = self._load_recording_module()
+
+        self.recorder = recording_module.MjpegRecorder(
+            status_callback=self._handle_recording_status,
+            finished_callback=self._handle_recording_finished,
+        )
+
+        return self.recorder
+
+    def _handle_recording_status(self, message):
+        """
+        Receive status messages from recording.py.
+        """
+
+        self._put_status_message(
+            f"Recording: {message}"
+        )
+
+
+    def _handle_recording_finished(self, output_path, return_code):
+        """
+        Called by recording.py when GStreamer exits.
+        """
+
+        self.last_recording_path = output_path
+
+        if return_code == 0:
+            self._put_status_message(
+                f"Recording finished: {output_path.name}"
+            )
+        else:
+            self._put_warning_message(
+                f"Recording exited with code {return_code}: {output_path.name}"
+            )
+
+    def _start_training_recording(self):
+        """
+        Start the existing MJPEG/MKV recorder.
+        """
+
+        enable_real_recording = get_controller_config_value(
+            "ENABLE_REAL_RECORDING",
+            True,
+        )
+
+        if not enable_real_recording:
+            self._put_status_message(
+                "Recording dry-run mode: recording not started."
+            )
+            return True
+
+        recorder = self._get_recorder()
+
+        self._put_status_message(
+            "Starting high-FPS recording..."
+        )
+
+        started = recorder.start_recording()
+
+        if not started:
+            self._put_error_message(
+                "Recording failed to start. Training will not start."
+            )
+            return False
+
+        self.last_recording_path = recorder.get_current_output_path()
+
+        if self.last_recording_path is not None:
+            self._put_status_message(
+                f"Recording started: {self.last_recording_path.name}"
+            )
+        else:
+            self._put_status_message(
+                "Recording started."
+            )
+
+        return True
+
+
+    def _stop_training_recording(self):
+        """
+        Stop the existing recorder.
+
+        The actual MKV finalization completes asynchronously in recording.py's
+        watcher thread.
+        """
+
+        enable_real_recording = get_controller_config_value(
+            "ENABLE_REAL_RECORDING",
+            True,
+        )
+
+        if not enable_real_recording:
+            self._put_status_message(
+                "Recording dry-run mode: recording stop skipped."
+            )
+            return True
+
+        if self.recorder is None:
+            self._put_status_message(
+                "No recorder has been created yet."
+            )
+            return True
+
+        if not self.recorder.is_recording():
+            self._put_status_message(
+                "Recorder is already stopped."
+            )
+            return True
+
+        self._put_status_message(
+            "Stopping recording..."
+        )
+
+        stopped_signal_sent = self.recorder.stop_recording()
+
+        if not stopped_signal_sent:
+            self._put_warning_message(
+                "Recording stop was requested, but recorder was not running."
+            )
+
+        return stopped_signal_sent
 
     # --------------------------------------------------------
     # STM32 serial module loading
@@ -1007,15 +1406,80 @@ def print_controller_messages(training_controller):
         )
 
 
+def test_training_controller_preview_flow():
+    """
+    Direct test for TrainingController preview integration.
+
+    This test opens the real camera preview service through the controller,
+    waits briefly, checks frame count, then stops preview.
+
+    It does not start training.
+    It does not send STM32 commands.
+    """
+
+    print()
+    print("-------------------------------------------")
+    print(" Preview flow test")
+    print("-------------------------------------------")
+
+    training_controller = TrainingController()
+
+    print()
+    print("Starting preview...")
+    training_controller.start_preview()
+    print_controller_messages(
+        training_controller,
+    )
+
+    preview_test_seconds = get_controller_config_value(
+        "CONTROLLER_PREVIEW_DIRECT_TEST_SECONDS",
+        3.0,
+    )
+
+    print()
+    print(
+        f"Waiting "
+        f"{preview_test_seconds:.1f} "
+        f"seconds..."
+    )
+
+    time.sleep(
+        preview_test_seconds,
+    )
+
+    preview_status = training_controller.get_preview_status()
+    latest_frame = training_controller.get_latest_preview_frame_rgb()
+
+    print()
+    print("Preview status:")
+    print(f"Running:      {preview_status['is_running']}")
+    print(f"Frame count:  {preview_status['frame_count']}")
+    print(f"Last error:   {preview_status['last_error_message']}")
+
+    if latest_frame is None:
+        print("Latest frame: None")
+
+    else:
+        print(f"Latest frame shape: {latest_frame.shape}")
+
+    print()
+    print("Stopping preview...")
+    training_controller.stop_preview()
+    print_controller_messages(
+        training_controller,
+    )
+
+    print()
+    print("Final state:")
+    print(training_controller.get_state())
+
+
 def test_training_controller_complete_flow():
     """
     Direct test for the STM32 COMPLETE path.
 
-    This test does not use:
-    - Tkinter
-    - camera
-    - GStreamer
-    - YOLO
+    This test may send real STM32 commands if ENABLE_REAL_STM32_SERIAL=True.
+    Use only when RUN_FULL_TRAINING_DIRECT_TEST=True.
     """
 
     print()
@@ -1069,6 +1533,9 @@ def test_training_controller_complete_flow():
 def test_training_controller_manual_stop_flow():
     """
     Direct test for the manual Stop Training path.
+
+    This test may send real STM32 commands if ENABLE_REAL_STM32_SERIAL=True.
+    Use only when RUN_FULL_TRAINING_DIRECT_TEST=True.
     """
 
     print()
@@ -1123,8 +1590,24 @@ def test_training_controller_direct():
     print("STM32 serial baud rate:")
     print(training_controller_config.STM32_SERIAL_BAUD_RATE)
 
-    test_training_controller_complete_flow()
-    test_training_controller_manual_stop_flow()
+    test_training_controller_preview_flow()
+
+    run_full_training_test = get_controller_config_value(
+        "RUN_FULL_TRAINING_DIRECT_TEST",
+        False,
+    )
+
+    if run_full_training_test:
+        test_training_controller_complete_flow()
+        test_training_controller_manual_stop_flow()
+
+    else:
+        print()
+        print("Full training direct tests skipped.")
+        print(
+            "Reason: RUN_FULL_TRAINING_DIRECT_TEST is False. "
+            "This avoids accidentally sending STM32 commands during preview testing."
+        )
 
     print()
     print("===========================================")

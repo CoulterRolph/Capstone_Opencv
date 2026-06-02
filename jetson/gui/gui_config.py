@@ -135,6 +135,18 @@ BUTTON_HEIGHT = 2
 
 WIDE_DROPDOWN_WIDTH = 55
 
+# ============================================================
+# Training preview display settings
+# ============================================================
+
+# How often the Training page refreshes the displayed preview frame.
+PREVIEW_FRAME_POLL_INTERVAL_MS = 100
+
+# The preview service currently provides 640x360 frames.
+# Setting these values to at least 640x360 prevents Tkinter from shrinking
+# the image down to 320x180.
+PREVIEW_DISPLAY_MAX_WIDTH = 640
+PREVIEW_DISPLAY_MAX_HEIGHT = 360
 
 # ============================================================
 # Shared button text

@@ -13,6 +13,15 @@ Important:
   that may be received from STM32.
 """
 
+# ============================================================
+# Recording integration settings
+# ============================================================
+
+RECORDING_MODULE_RELATIVE_PATH = "capture/recording.py"
+
+# True = actually start/stop the GStreamer recorder.
+# False = skip real recording for dry-run controller testing.
+ENABLE_REAL_RECORDING = True
 
 # ============================================================
 # Training setting limits
@@ -131,6 +140,25 @@ STM32_RESPONSE_ERROR_PREFIX = "ERR"
 # recording and preview are real yet.
 USE_PLACEHOLDER_HARDWARE = True
 
+# ============================================================
+# Camera preview integration settings
+# ============================================================
+
+# Relative path from project/jetson to the preview helper module.
+#
+# The TrainingController loads this file directly so capture/ does not
+# need to be a Python package.
+PREVIEW_MODULE_RELATIVE_PATH = "capture/preview.py"
+
+
+# Direct controller test behavior.
+#
+# Keep this False during normal development because the full training
+# direct test may send real STM32 commands when ENABLE_REAL_STM32_SERIAL=True.
+RUN_FULL_TRAINING_DIRECT_TEST = False
+
+# Safe preview-only direct test duration.
+CONTROLLER_PREVIEW_DIRECT_TEST_SECONDS = 3.0
 
 # ============================================================
 # Status text
@@ -142,7 +170,6 @@ STATUS_PREVIEW_STARTED = "Preview started."
 STATUS_PREVIEW_STOPPED = "Preview stopped."
 
 STATUS_SETTINGS_VALIDATED = "Training settings validated."
-
 
 # ============================================================
 # STM32 status text
@@ -195,3 +222,4 @@ STATUS_STOP_SENT_PLACEHOLDER = "STOP command placeholder complete."
 STATUS_TRAINING_STARTED = "Training started."
 STATUS_TRAINING_STOPPED = "Training stopped."
 STATUS_TRAINING_COMPLETE = "STM32 COMPLETE received. Training complete."
+
