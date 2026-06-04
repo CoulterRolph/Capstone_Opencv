@@ -153,6 +153,7 @@ class TrainingPage(tk.Frame):
         self.stop_preview_button = None
         self.start_training_button = None
         self.stop_training_button = None
+        self.test_shot_button = None
         self.back_button = None
 
         self.preview_placeholder_text = (
@@ -498,6 +499,7 @@ class TrainingPage(tk.Frame):
         bottom_panel.columnconfigure(3, weight=0)
         bottom_panel.columnconfigure(4, weight=0)
         bottom_panel.columnconfigure(5, weight=0)
+        bottom_panel.columnconfigure(6, weight=0)
 
         self.session_status_label = tk.Label(
             bottom_panel,
@@ -537,6 +539,18 @@ class TrainingPage(tk.Frame):
             padx=4,
         )
 
+        self.test_shot_button = self._create_button(
+            parent=bottom_panel,
+            text="Test Shot",
+            command=self._on_test_shot_clicked,
+            background_color=PRIMARY_BUTTON_COLOR,
+        )
+        self.test_shot_button.grid(
+            row=0,
+            column=3,
+            padx=4,
+        )
+
         self.start_training_button = self._create_button(
             parent=bottom_panel,
             text="Start Training",
@@ -545,7 +559,7 @@ class TrainingPage(tk.Frame):
         )
         self.start_training_button.grid(
             row=0,
-            column=3,
+            column=4,
             padx=4,
         )
 
@@ -557,7 +571,7 @@ class TrainingPage(tk.Frame):
         )
         self.stop_training_button.grid(
             row=0,
-            column=4,
+            column=5,
             padx=4,
         )
 
@@ -569,7 +583,7 @@ class TrainingPage(tk.Frame):
         )
         self.back_button.grid(
             row=0,
-            column=5,
+            column=6,
             padx=(18, 0),
         )
 
@@ -667,6 +681,34 @@ class TrainingPage(tk.Frame):
                 message=str(error),
             )
 
+    def _on_test_shot_clicked(self):
+        """
+        Read the launcher settings and fire exactly one test shot.
+        """
+
+        test_values = self._read_test_shot_values_from_gui()
+
+        if test_values is None:
+            return
+
+        ball_speed, pace_seconds = test_values
+
+        try:
+            self.training_controller.start_test_shot(
+                ball_speed=ball_speed,
+                pace_seconds=pace_seconds,
+            )
+
+            self._set_training_button_state()
+            self._reset_preview_display_placeholder()
+
+        except Exception as error:
+            self._set_error_status(str(error))
+            self._show_error_message(
+                title="Test Shot Failed",
+                message=str(error),
+            )
+
     def _on_stop_training_clicked(self):
         """
         Ask the controller to stop the training session.
@@ -734,6 +776,28 @@ class TrainingPage(tk.Frame):
             return None
 
         return ball_speed, pace_seconds, number_of_shots
+
+    def _read_test_shot_values_from_gui(self):
+        """
+        Convert GUI values required for a launcher test shot.
+        """
+
+        try:
+            ball_speed = int(self.ball_speed_var.get())
+            pace_seconds = float(self.pace_seconds_var.get())
+
+        except ValueError:
+            self._show_error_message(
+                title="Invalid Test Shot Settings",
+                message=(
+                    "Please enter valid test shot settings.\n\n"
+                    "Ball speed must be an integer.\n"
+                    "Pace must be a number in seconds."
+                ),
+            )
+            return None
+
+        return ball_speed, pace_seconds
 
     # ========================================================
     # Controller message polling
@@ -1102,6 +1166,7 @@ class TrainingPage(tk.Frame):
 
         self._set_button_state(self.start_preview_button, "normal")
         self._set_button_state(self.stop_preview_button, "disabled")
+        self._set_button_state(self.test_shot_button, "normal")
         self._set_button_state(self.start_training_button, "normal")
         self._set_button_state(self.stop_training_button, "disabled")
         self._set_button_state(self.back_button, "normal")
@@ -1113,6 +1178,7 @@ class TrainingPage(tk.Frame):
 
         self._set_button_state(self.start_preview_button, "disabled")
         self._set_button_state(self.stop_preview_button, "normal")
+        self._set_button_state(self.test_shot_button, "normal")
         self._set_button_state(self.start_training_button, "normal")
         self._set_button_state(self.stop_training_button, "disabled")
         self._set_button_state(self.back_button, "normal")
@@ -1124,6 +1190,7 @@ class TrainingPage(tk.Frame):
 
         self._set_button_state(self.start_preview_button, "disabled")
         self._set_button_state(self.stop_preview_button, "disabled")
+        self._set_button_state(self.test_shot_button, "disabled")
         self._set_button_state(self.start_training_button, "disabled")
         self._set_button_state(self.stop_training_button, "normal")
         self._set_button_state(self.back_button, "disabled")
@@ -1135,6 +1202,7 @@ class TrainingPage(tk.Frame):
 
         self._set_button_state(self.start_preview_button, "normal")
         self._set_button_state(self.stop_preview_button, "disabled")
+        self._set_button_state(self.test_shot_button, "normal")
         self._set_button_state(self.start_training_button, "normal")
         self._set_button_state(self.stop_training_button, "disabled")
         self._set_button_state(self.back_button, "normal")
@@ -1146,6 +1214,7 @@ class TrainingPage(tk.Frame):
 
         self._set_button_state(self.start_preview_button, "normal")
         self._set_button_state(self.stop_preview_button, "normal")
+        self._set_button_state(self.test_shot_button, "normal")
         self._set_button_state(self.start_training_button, "normal")
         self._set_button_state(self.stop_training_button, "normal")
         self._set_button_state(self.back_button, "normal")

@@ -126,6 +126,16 @@ STM32_RESPONSE_ACK_STOP = "ACK:STOP"
 #     ERR:INVALID_SETTING
 STM32_RESPONSE_ERROR_PREFIX = "ERR"
 
+# Additional STM32 responses used by the UART protocol.
+# These match the protocol spec the GUI/controller expects.
+STM32_RESPONSE_STARTING = "STARTING"
+STM32_RESPONSE_STOPPING = "STOPPING"
+STM32_RESPONSE_UPDATED = "UPDATED"
+
+# STM32 may return short error keywords for malformed commands.
+STM32_RESPONSE_COMMAND = "COMMAND"
+STM32_RESPONSE_FORMAT = "FORMAT"
+
 
 # ============================================================
 # Placeholder / simulation settings
@@ -193,6 +203,9 @@ STATUS_STM32_START_SENT = "STM32 START command sent."
 STATUS_STM32_STOP_SENT = "STM32 STOP command sent."
 
 STATUS_STM32_MESSAGE_RECEIVED = "STM32 message received"
+
+STATUS_TEST_SHOT_SETTINGS_VALIDATED = "Test shot settings validated."
+STATUS_TEST_SHOT_STARTED = "Test shot started."
 
 
 # ============================================================

@@ -593,6 +593,92 @@ class TrainingController:
 
         return True
 
+    def start_test_shot(
+        self,
+        ball_speed,
+        pace_seconds,
+    ):
+        """
+        Send one test shot to the STM32 launcher.
+
+        The test shot uses the current ball speed and pace, but forces
+        exactly one shot so the launcher only fires once.
+        """
+
+        if self.is_training_running():
+            self._put_warning_message(
+                "Training is already running.",
+            )
+
+            return False
+
+        try:
+            settings = self.validate_training_settings(
+                ball_speed=ball_speed,
+                pace_seconds=pace_seconds,
+                number_of_shots=1,
+            )
+
+        except ValueError as error:
+            self.state = training_controller_config.STATE_ERROR
+
+            self._put_error_message(
+                str(error),
+            )
+
+            return False
+
+        self.current_settings = settings
+
+        if self.is_preview_running():
+            self.stop_preview()
+
+        self.state = training_controller_config.STATE_STARTING
+
+        self._put_status_message(
+            training_controller_config.STATUS_TEST_SHOT_SETTINGS_VALIDATED,
+        )
+
+        try:
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_SENDING_SETTING,
+            )
+
+            self._send_stm32_settings(
+                settings=settings,
+            )
+
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_SETTING_STEP_COMPLETE,
+            )
+
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_SENDING_START,
+            )
+
+            self._send_stm32_start()
+
+            self._put_status_message(
+                training_controller_config.STATUS_STM32_START_STEP_COMPLETE,
+            )
+
+        except Exception as error:
+            self.state = training_controller_config.STATE_ERROR
+
+            self._put_error_message(
+                f"Start test shot failed: {error}",
+            )
+
+            return False
+
+        self.state = training_controller_config.STATE_TRAINING
+
+        self._put_status_message(
+            training_controller_config.STATUS_TEST_SHOT_STARTED,
+        )
+
+        return True
+
     def stop_training(self):
         """
         Manually stop training.
@@ -682,6 +768,21 @@ class TrainingController:
         if uppercase_message == training_controller_config.STM32_RESPONSE_COMPLETE:
             self._handle_stm32_complete()
 
+        elif uppercase_message == training_controller_config.STM32_RESPONSE_STARTING:
+            self._put_status_message(
+                "STM32 starting training."
+            )
+
+        elif uppercase_message == training_controller_config.STM32_RESPONSE_STOPPING:
+            self._put_status_message(
+                "STM32 stopping training."
+            )
+
+        elif uppercase_message == training_controller_config.STM32_RESPONSE_UPDATED:
+            self._put_status_message(
+                "STM32 settings updated."
+            )
+
         elif uppercase_message in [
             training_controller_config.STM32_RESPONSE_ACK_SETTING,
             training_controller_config.STM32_RESPONSE_ACK_START,
@@ -689,6 +790,17 @@ class TrainingController:
         ]:
             self._put_status_message(
                 f"STM32 acknowledged: {clean_message}",
+            )
+
+        # Short error keywords returned by STM32 for malformed commands.
+        elif uppercase_message in [
+            training_controller_config.STM32_RESPONSE_COMMAND,
+            training_controller_config.STM32_RESPONSE_FORMAT,
+        ]:
+            self.state = training_controller_config.STATE_ERROR
+
+            self._put_error_message(
+                f"STM32 protocol error: {clean_message}",
             )
 
         elif uppercase_message.startswith(
