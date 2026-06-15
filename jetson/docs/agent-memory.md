@@ -20,6 +20,28 @@ The system is intended to:
 
 Make the smallest safe change that moves the project forward.
 
+```mermaid
+flowchart TD
+    Start[Start with one small behavior] --> Module[Build or update isolated module]
+    Module --> DirectTest[Add or preserve direct test]
+    DirectTest --> Compile[Run py_compile]
+    Compile --> ModuleRun[Run module directly]
+    ModuleRun --> Controller[Integrate into controller]
+    Controller --> ControllerTest[Test controller directly]
+    ControllerTest --> Gui[Integrate into GUI]
+    Gui --> GuiTest[Test full GUI workflow]
+    GuiTest --> Summary[Summarize checkpoint]
+
+    Compile -->|fails| FixModule[Fix isolated code]
+    ModuleRun -->|fails| FixModule
+    ControllerTest -->|fails| FixController[Fix controller boundary]
+    GuiTest -->|fails| FixGui[Fix GUI wiring]
+
+    FixModule --> Compile
+    FixController --> ControllerTest
+    FixGui --> GuiTest
+```
+
 When possible, build new behavior in this order:
 
 1. Build the isolated module or function.

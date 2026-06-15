@@ -2,50 +2,28 @@
 
 ## Purpose
 
-This document describes the overall architecture of the T-Cubed Jetson software.
+This document explains the software architecture of the T-Cubed Jetson project.
 
-T-Cubed is a table-tennis training assistant that connects:
+T-Cubed is a table-tennis training assistant. The Jetson application connects the
+user interface, camera capture, computer vision analysis, STM32 launcher control,
+and saved review outputs.
+
+The important idea is that the project is split into layers:
 
 ```text
 Tkinter GUI
-Jetson camera capture
-YOLO computer vision
-OpenCV analysis
-STM32 launcher control
-Saved review outputs
+Controller workflow layer
+Capture / communication / analysis modules
+Hardware, model files, recordings, and review outputs
 ```
 
-The system is intentionally organized as layers. Each layer has a small job, and the lower-level modules do the hardware or computer-vision work.
+Each layer has one main job. This makes the project easier to understand and
+safer to change because GUI code, hardware code, and computer vision code do not
+all live in the same place.
 
 ---
 
 ## Architecture Summary
-
-```text
-User
-  ↓
-Tkinter GUI Pages
-  ↓
-Controller Layer
-  ↓
-Functional Modules
-  ↓
-Hardware / Files / Saved Outputs
-```
-
-The main design rule is:
-
-```text
-GUI pages handle user interaction.
-Controllers coordinate workflows and state.
-Functional modules do the actual work.
-```
-
-This keeps camera code, serial code, YOLO inference, OpenCV processing, and review display logic separated.
-
----
-
-## System Diagram
 
 ```mermaid
 flowchart TD
@@ -53,10 +31,10 @@ flowchart TD
     Main --> GuiShell[gui/gui.py<br/>Tkinter application shell]
 
     GuiShell --> PageManager[gui/page_manager.py<br/>Page switching]
-    PageManager --> NavPage[gui/navigation_page.py<br/>Workflow selection]
-    PageManager --> TrainingPage[gui/training_page.py<br/>Training controls and preview display]
-    PageManager --> AnalysisPage[gui/analysis_page.py<br/>Recording selection and analysis status]
-    PageManager --> ReviewPage[gui/review_page.py<br/>Saved output review]
+    PageManager --> NavigationPage[gui/navigation_page.py<br/>Choose workflow]
+    PageManager --> TrainingPage[gui/training_page.py<br/>Training setup and preview]
+    PageManager --> AnalysisPage[gui/analysis_page.py<br/>Select recording and run analysis]
+    PageManager --> ReviewPage[gui/review_page.py<br/>Review saved outputs]
 
     TrainingPage --> TrainingController[controller/training_controller.py]
     AnalysisPage --> AnalysisController[controller/analysis_controller.py]
@@ -64,34 +42,47 @@ flowchart TD
 
     TrainingController --> Preview[capture/preview.py<br/>Low-FPS OpenCV preview]
     TrainingController --> Recording[capture/recording.py<br/>High-FPS GStreamer MKV recording]
-    TrainingController --> Serial[comm/serial.py<br/>STM32 protocol messages]
+    TrainingController --> Serial[comm/serial.py<br/>STM32 serial protocol]
 
     Preview --> Camera[USB camera]
     Recording --> Camera
-    Serial --> STM32[STM32 ball launcher]
+    Serial --> STM32[STM32 launcher]
 
-    Recording --> Recordings[capture/recordings<br/>Recorded MKV videos]
-    Recordings --> AnalysisController
+    Recording --> RecordingFiles[capture/recordings<br/>Raw MKV recordings]
+    RecordingFiles --> AnalysisController
 
-    AnalysisController --> Worker[Background analysis thread]
-    Worker --> Pipeline[analysis/analysis.py]
+    AnalysisController --> AnalysisThread[Background analysis thread]
+    AnalysisThread --> Pipeline[analysis/analysis.py<br/>Main CV pipeline]
 
     Pipeline --> VideoCheck[analysis/video_checker.py]
     Pipeline --> TableDetect[analysis/table.py<br/>YOLO table keypoints]
-    Pipeline --> Homography[analysis/homography.py]
+    Pipeline --> Homography[analysis/homography.py<br/>Stable table transform]
     Pipeline --> BallTrack[analysis/ball.py<br/>YOLO ball tracking]
-    Pipeline --> BounceDetect[analysis/bounce.py]
-    Pipeline --> Annotate[analysis/annotate.py]
-    Pipeline --> Heatmap[analysis/heatmap.py]
-    Pipeline -. prepared utilities .-> JsonLog[analysis/log_json.py]
+    Pipeline --> BounceDetect[analysis/bounce.py<br/>Bounce events]
+    Pipeline --> Annotate[analysis/annotate.py<br/>Annotated video]
+    Pipeline --> Heatmap[analysis/heatmap.py<br/>Bounce heatmap]
+    Pipeline -. prepared utility .-> JsonLog[analysis/log_json.py]
 
-    Annotate --> AnnotatedOut[review/annotated<br/>Annotated MKV videos]
-    Heatmap --> HeatmapOut[review/heatmaps<br/>Heatmap PNG images]
-    JsonLog -. future/full integration .-> JsonOut[json_results<br/>Analysis JSON]
+    TableDetect --> TableModel[models/table_keypoints.pt]
+    BallTrack --> BallModel[models/ball_player_detect.pt]
 
-    AnnotatedOut --> ReviewPage
-    HeatmapOut --> ReviewPage
-    JsonOut -. future review stats .-> ReviewPage
+    Annotate --> AnnotatedOutput[review/annotated<br/>Annotated MKV files]
+    Heatmap --> HeatmapOutput[review/heatmaps<br/>Heatmap PNG files]
+    JsonLog -. partial / future integration .-> JsonOutput[json_results<br/>Structured JSON results]
+
+    AnnotatedOutput --> ReviewPage
+    HeatmapOutput --> ReviewPage
+    JsonOutput -. future statistics view .-> ReviewPage
+```
+
+The shortest version is:
+
+```text
+main.py starts the GUI.
+GUI pages collect user input and display status.
+Controllers coordinate the workflows.
+Functional modules do camera, serial, recording, and analysis work.
+Outputs are saved for the Review page to load later.
 ```
 
 ---
@@ -100,82 +91,228 @@ flowchart TD
 
 | Layer | Files | Responsibility |
 | --- | --- | --- |
-| Entry point | `main.py` | Launch the Tkinter GUI only. |
-| GUI | `gui/` | Show pages, inputs, buttons, preview frames, status text, and saved review outputs. |
-| Controllers | `controller/` | Validate user requests, coordinate state, start background work, and connect GUI events to functional modules. |
-| Capture | `capture/` | Open camera preview and record high-FPS training video. |
-| Analysis | `analysis/` | Run YOLO/OpenCV processing, track the ball, detect bounces, and generate review outputs. |
-| Communication | `comm/` | Build and send STM32 serial protocol messages. |
-| Models | `models/` | Store YOLO weights used by table and ball/player detection. |
-| Outputs | `capture/recordings`, `review/`, `json_results/` | Store videos, annotated videos, heatmaps, and future structured results. |
+| Entry point | `main.py` | Launch the GUI. It should stay small. |
+| GUI | `gui/` | Show pages, inputs, buttons, preview frames, status text, and saved outputs. |
+| Controllers | `controller/` | Validate requests, manage workflow state, start background work, and connect GUI actions to functional modules. |
+| Capture | `capture/` | Own camera preview and high-FPS training recording. |
+| Communication | `comm/` | Build, send, and read STM32 serial protocol messages. |
+| Analysis | `analysis/` | Run YOLO/OpenCV processing, table homography, ball tracking, bounce detection, annotation, and heatmap generation. |
+| Shared objects | `classes/` | Hold object shapes shared by analysis modules. |
+| Models | `models/` | Store trained YOLO model weights. |
+| Outputs | `capture/recordings`, `review/`, `json_results/` | Store raw recordings, annotated videos, heatmaps, and partial/future JSON results. |
 
 ---
 
-## Runtime Workflows
+## Key Design Decision: Why Use Controllers?
 
-### Training / Capture
+The project has a common software problem:
+
+```text
+The GUI needs to start real work, but the real work is slow, hardware-related,
+or computer-vision-heavy.
+```
+
+The common solution is to put a controller between the GUI and the functional
+modules.
+
+```text
+GUI page -> controller -> functional module
+```
+
+For example, the Training page should not directly build serial messages or run
+GStreamer. It calls `TrainingController`, and the controller decides the correct
+sequence:
+
+```text
+validate settings
+stop preview if needed
+send SETTINGS to STM32
+start recording
+send START to STM32
+track training state
+```
+
+This is useful because a GUI page can stay focused on user interaction while the
+controller owns the workflow rules.
+
+---
+
+## Runtime Workflow: Training
+
+Training has two camera paths on purpose:
+
+| Camera path | Module | Purpose |
+| --- | --- | --- |
+| Preview | `capture/preview.py` | Low-FPS OpenCV preview for setup. |
+| Recording | `capture/recording.py` | High-FPS GStreamer recording to MKV for later analysis. |
+
+The preview path is for the user to see the camera. The recording path is for
+capturing better video data without forcing the GUI to process every frame.
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant TP as Training Page
     participant TC as Training Controller
-    participant REC as capture/recording.py
-    participant SER as comm/serial.py
+    participant PV as Preview Service
+    participant REC as MjpegRecorder
+    participant SER as Serial Module
     participant STM as STM32
 
-    U->>TP: Enter speed, pace, shots
-    U->>TP: Start Training
+    U->>TP: Start preview
+    TP->>TC: start_preview()
+    TC->>PV: Start low-FPS camera service
+    PV-->>TP: Latest RGB frames are polled by GUI
+
+    U->>TP: Enter speed, pace, and shots
+    U->>TP: Start training
     TP->>TC: start_training(...)
     TC->>TC: Validate settings
+    TC->>PV: Stop preview if it is running
     TC->>SER: Send SETTINGS
     SER->>STM: SETTINGS:speed:pace_ms:shots
-    TC->>REC: Start GStreamer recording
+    TC->>REC: Start GStreamer MKV recording
     TC->>SER: Send START
     SER->>STM: START
-    U->>TP: Stop Training or session completes
-    TP->>TC: stop_training() or handle COMPLETE
-    TC->>SER: STOP if manual stop
-    TC->>REC: Stop/finalize MKV
+
+    U->>TP: Stop training
+    TP->>TC: stop_training()
+    TC->>SER: Send STOP
+    SER->>STM: STOP
+    TC->>REC: Stop and finalize MKV
 ```
 
-### Analysis / Review
+`TrainingController.handle_stm32_message()` is prepared for incoming STM32
+messages such as `COMPLETE`, `ACK`, and `ERR`. The controller can react to
+`COMPLETE` by stopping recording without sending another `STOP`. The automatic
+live serial listener loop is still a prepared/future integration point.
+
+---
+
+## Runtime Workflow: Analysis
+
+Analysis runs from a saved recording instead of the live preview stream.
+
+That is another key design decision:
+
+```text
+Record first, analyze after.
+```
+
+This is simpler and more reliable for the current project because YOLO,
+homography, bounce detection, annotation, and heatmap generation are expensive.
+Running them offline avoids freezing the Tkinter interface during training.
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant AP as Analysis Page
     participant AC as Analysis Controller
-    participant P as analysis.py
-    participant R as review folders
+    participant Worker as Background Thread
+    participant Pipeline as analysis.py
+    participant Outputs as review folders
 
     U->>AP: Select recording
     AP->>AC: start_analysis(video)
-    AC->>P: Run in background thread
-    P->>P: Validate video
-    P->>P: Detect table and homography
-    P->>P: Track active ball
-    P->>P: Detect bounces
-    P->>R: Save annotated video and heatmap
-    AC->>AP: Queue complete/status message
+    AC->>Worker: Start daemon thread
+    Worker->>Pipeline: run_analysis(video_path)
+    Pipeline->>Pipeline: Check video file
+    Pipeline->>Pipeline: Detect table on sampled frames
+    Pipeline->>Pipeline: Compute stable homography
+    Pipeline->>Pipeline: Track active ball frame-by-frame
+    Pipeline->>Pipeline: Detect bounces
+    Pipeline->>Outputs: Save annotated video
+    Pipeline->>Outputs: Save heatmap image
+    Worker->>AC: Store result and queue complete message
+    AC-->>AP: GUI polls queued status messages
 ```
+
+The analysis controller dynamically loads `analysis/analysis.py` and runs
+`run_analysis(video_path)` in a background thread. This keeps the GUI responsive
+while the computer vision pipeline runs.
 
 ---
 
-## Important Boundaries
+## Analysis Pipeline
 
-The project depends on clear ownership boundaries:
+The main analysis pipeline lives in `analysis/analysis.py`. It coordinates
+smaller analysis modules:
+
+```mermaid
+flowchart LR
+    Video[Selected recording] --> Check[video_checker.py]
+    Check --> Table[table.py]
+    Table --> Homography[homography.py]
+    Homography --> Ball[ball.py]
+    Ball --> Bounce[bounce.py]
+    Bounce --> Annotate[annotate.py]
+    Bounce --> Heatmap[heatmap.py]
+    Annotate --> Annotated[review/annotated]
+    Heatmap --> Heatmaps[review/heatmaps]
+```
+
+Current primary analysis results are:
 
 ```text
-GUI files should not run YOLO.
-GUI files should not open serial devices directly.
-GUI files should not own camera capture loops.
+- Video metadata
+- Detected table corners
+- Stable homography information
+- Active ball tracking summary
+- Bounce count
+- Bounce event positions and times
+- Optional annotated video path
+- Optional heatmap image path
+```
+
+`analysis/log_json.py` provides JSON-safe logging helpers, but rich JSON export
+is not the main end-to-end output yet. Treat `json_results/` as partial/future
+structured results unless the pipeline is later updated to persist full JSON
+metrics every run.
+
+---
+
+## Review Workflow
+
+The Review page is intentionally a viewer for saved artifacts.
+
+```text
+Review should load outputs that already exist.
+Review should not rerun YOLO.
+Review should not recompute homography or bounces.
+```
+
+Currently, `ReviewController` lists heatmap images from `review/heatmaps`.
+Annotated videos are saved into `review/annotated`, and richer statistics from
+JSON are a future integration point.
+
+---
+
+## Ownership Boundaries
+
+These boundaries are the rules that keep the codebase understandable:
+
+```text
+main.py should only launch the GUI.
+GUI pages should not run YOLO.
+GUI pages should not open serial devices directly.
+GUI pages should not own camera capture loops.
 Controllers should not contain OpenCV/YOLO algorithms.
 Analysis modules should not create Tkinter widgets.
 Review should load saved outputs, not rerun analysis.
+Serial message formatting should stay in comm/serial.py.
+Recording details should stay in capture/recording.py.
 ```
 
-These boundaries make it possible to test or replace one subsystem without rewriting the whole app.
+When you are unsure where a new feature belongs, ask:
+
+```text
+Is this about what the user sees? Put it in gui/.
+Is this about workflow order or state? Put it in controller/.
+Is this about camera capture? Put it in capture/.
+Is this about STM32 messages? Put it in comm/.
+Is this about computer vision? Put it in analysis/.
+Is this about viewing saved results? Put it in review/controller GUI code.
+```
 
 ---
 
@@ -186,12 +323,13 @@ Working or mostly connected:
 ```text
 - Page-based Tkinter GUI
 - Training settings validation
-- Low-FPS camera preview service
-- High-FPS GStreamer/MKV recording service
+- Low-FPS OpenCV camera preview
+- High-FPS GStreamer/MKV recording through MjpegRecorder
 - STM32 SETTINGS / START / STOP command building and sending
 - Background-thread analysis controller
+- Video checking and metadata extraction
 - Table keypoint detection
-- Stable homography calculation
+- Multi-sample stable homography calculation
 - Active ball tracking
 - Bounce detection
 - Annotated video output
@@ -202,27 +340,31 @@ Working or mostly connected:
 Prepared or partially integrated:
 
 ```text
-- STM32 response listener loop
-- Automatic end-to-end COMPLETE handling from a live serial reader
+- Automatic live STM32 response listener loop
+- End-to-end COMPLETE handling from a live serial reader
 - Rich JSON analysis export from the main pipeline
 - Review statistics loaded from JSON
 - Player-specific metrics
-- Table detection overlay during preview
+- Table detection overlay during live preview
+- Full review support for annotated videos
 ```
 
 ---
 
 ## Why This Architecture Fits the Project
 
-The Jetson needs to coordinate hardware, computer vision, and a user-facing GUI at the same time. Keeping the system layered prevents expensive or fragile work from leaking into the UI.
+The Jetson has to coordinate hardware, computer vision, and a user-facing GUI.
+Those jobs fail in different ways and run at different speeds.
 
-For example:
+The layered architecture protects the project from one part breaking every other
+part:
 
 ```text
-If preview fails, recorded-video analysis can still be tested.
-If STM32 communication fails, existing recordings can still be analyzed.
-If heatmap generation fails, ball and bounce data can still be useful.
+If preview fails, saved recordings can still be analyzed.
+If STM32 communication fails, existing recordings can still be reviewed.
+If analysis is slow, the GUI can stay responsive because analysis runs in a thread.
+If heatmap generation fails, ball and bounce data may still be useful.
 If the Review page changes, the analysis pipeline should not need to change.
 ```
 
-That separation is the core architecture of the project.
+That separation is the core software architecture of the project.
