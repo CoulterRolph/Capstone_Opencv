@@ -4,8 +4,8 @@ from datetime import datetime
 # ======================
 # CONFIG (edit these)
 # ======================
-DIRECTORY = r"C:\\Users\\diplo\\Pictures\\Camera Roll\\training_ball"
-PREFIX = "ball_player"  # e.g. "webcam", "session1", etc.
+DIRECTORY = r"C:\Users\diplo\Pictures\Camera Roll\training_dataset_2"
+PREFIX = "TCubedDataset_2"  # e.g. "webcam", "session1", etc.
 
 # Use today's date automatically (YYYYMMDD). Or set manually like "20260304".
 DATE_STR = datetime.now().strftime("%Y%m%d")
