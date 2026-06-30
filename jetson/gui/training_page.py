@@ -138,8 +138,8 @@ class TrainingPage(tk.Frame):
         self.training_controller = TrainingController()
 
         self.ball_speed_var = tk.IntVar(value=75)
-        self.pace_seconds_var = tk.StringVar(value="1.5")
-        self.number_of_shots_var = tk.StringVar(value="10")
+        self.pace_seconds_var = tk.DoubleVar(value=1.5)
+        self.number_of_shots_var = tk.IntVar(value=10)
 
         self.ball_speed_value_label = None
         self.preview_status_label = None
@@ -329,10 +329,10 @@ class TrainingPage(tk.Frame):
 
     def _build_pace_control(self, parent):
         """
-        Build the pace entry.
+        Build the pace spinner control with +/- buttons.
 
-        The GUI shows seconds.
-        The controller converts seconds to milliseconds.
+        Range: 0.5 to 3.0 seconds
+        Increment: 0.5 seconds
         """
 
         row_frame = tk.Frame(
@@ -353,21 +353,75 @@ class TrainingPage(tk.Frame):
         )
         label.pack(
             anchor="w",
+            pady=(0, 8),
         )
 
-        entry = tk.Entry(
+        spinner_frame = tk.Frame(
             row_frame,
-            textvariable=self.pace_seconds_var,
-            font=NORMAL_FONT,
+            bg=CARD_BACKGROUND_COLOR,
         )
-        entry.pack(
-            fill="x",
+        spinner_frame.pack(
+            anchor="w",
             pady=(6, 0),
+        )
+
+        minus_button = tk.Button(
+            spinner_frame,
+            text="-",
+            command=self._on_pace_minus_clicked,
+            font=("Arial", 16, "bold"),
+            fg="white",
+            bg=PRIMARY_BUTTON_COLOR,
+            activeforeground="white",
+            activebackground=PRIMARY_BUTTON_COLOR,
+            relief="flat",
+            padx=12,
+            pady=6,
+            cursor="hand2",
+        )
+        minus_button.pack(
+            side="left",
+            padx=(0, 12),
+        )
+
+        value_label = tk.Label(
+            spinner_frame,
+            textvariable=self.pace_seconds_var,
+            font=("Arial", 18, "bold"),
+            fg=TEXT_DARK_COLOR,
+            bg=CARD_BACKGROUND_COLOR,
+            width=8,
+        )
+        value_label.pack(
+            side="left",
+            padx=12,
+        )
+
+        plus_button = tk.Button(
+            spinner_frame,
+            text="+",
+            command=self._on_pace_plus_clicked,
+            font=("Arial", 16, "bold"),
+            fg="white",
+            bg=PRIMARY_BUTTON_COLOR,
+            activeforeground="white",
+            activebackground=PRIMARY_BUTTON_COLOR,
+            relief="flat",
+            padx=12,
+            pady=6,
+            cursor="hand2",
+        )
+        plus_button.pack(
+            side="left",
+            padx=(12, 0),
         )
 
     def _build_number_of_shots_control(self, parent):
         """
-        Build the number-of-shots entry.
+        Build the number-of-shots spinner control with +/- buttons.
+
+        Range: 2 to 10 shots
+        Increment: 1 shot
         """
 
         row_frame = tk.Frame(
@@ -388,16 +442,67 @@ class TrainingPage(tk.Frame):
         )
         label.pack(
             anchor="w",
+            pady=(0, 8),
         )
 
-        entry = tk.Entry(
+        spinner_frame = tk.Frame(
             row_frame,
-            textvariable=self.number_of_shots_var,
-            font=NORMAL_FONT,
+            bg=CARD_BACKGROUND_COLOR,
         )
-        entry.pack(
-            fill="x",
+        spinner_frame.pack(
+            anchor="w",
             pady=(6, 0),
+        )
+
+        minus_button = tk.Button(
+            spinner_frame,
+            text="-",
+            command=self._on_shots_minus_clicked,
+            font=("Arial", 16, "bold"),
+            fg="white",
+            bg=PRIMARY_BUTTON_COLOR,
+            activeforeground="white",
+            activebackground=PRIMARY_BUTTON_COLOR,
+            relief="flat",
+            padx=12,
+            pady=6,
+            cursor="hand2",
+        )
+        minus_button.pack(
+            side="left",
+            padx=(0, 12),
+        )
+
+        value_label = tk.Label(
+            spinner_frame,
+            textvariable=self.number_of_shots_var,
+            font=("Arial", 18, "bold"),
+            fg=TEXT_DARK_COLOR,
+            bg=CARD_BACKGROUND_COLOR,
+            width=8,
+        )
+        value_label.pack(
+            side="left",
+            padx=12,
+        )
+
+        plus_button = tk.Button(
+            spinner_frame,
+            text="+",
+            command=self._on_shots_plus_clicked,
+            font=("Arial", 16, "bold"),
+            fg="white",
+            bg=PRIMARY_BUTTON_COLOR,
+            activeforeground="white",
+            activebackground=PRIMARY_BUTTON_COLOR,
+            relief="flat",
+            padx=12,
+            pady=6,
+            cursor="hand2",
+        )
+        plus_button.pack(
+            side="left",
+            padx=(12, 0),
         )
 
     def _build_preview_card(self, parent):
@@ -479,6 +584,10 @@ class TrainingPage(tk.Frame):
     def _build_bottom_panel_section(self):
         """
         Build the bottom status and button panel.
+        
+        Uses a 2-row layout to accommodate 4:3 aspect ratio screens.
+        Row 1: Status | Start Preview | Stop Preview | Start Training
+        Row 2: Test Shot | Stop Training | Back to Home
         """
 
         bottom_panel = tk.Frame(
@@ -493,13 +602,12 @@ class TrainingPage(tk.Frame):
             pady=(0, 24),
         )
 
+        # ---- Row 1: Status and primary buttons ----
+        
         bottom_panel.columnconfigure(0, weight=1)
         bottom_panel.columnconfigure(1, weight=0)
         bottom_panel.columnconfigure(2, weight=0)
         bottom_panel.columnconfigure(3, weight=0)
-        bottom_panel.columnconfigure(4, weight=0)
-        bottom_panel.columnconfigure(5, weight=0)
-        bottom_panel.columnconfigure(6, weight=0)
 
         self.session_status_label = tk.Label(
             bottom_panel,
@@ -539,18 +647,6 @@ class TrainingPage(tk.Frame):
             padx=4,
         )
 
-        self.test_shot_button = self._create_button(
-            parent=bottom_panel,
-            text="Test Shot",
-            command=self._on_test_shot_clicked,
-            background_color=PRIMARY_BUTTON_COLOR,
-        )
-        self.test_shot_button.grid(
-            row=0,
-            column=3,
-            padx=4,
-        )
-
         self.start_training_button = self._create_button(
             parent=bottom_panel,
             text="Start Training",
@@ -559,8 +655,28 @@ class TrainingPage(tk.Frame):
         )
         self.start_training_button.grid(
             row=0,
-            column=4,
+            column=3,
             padx=4,
+        )
+
+        # ---- Row 2: Secondary buttons ----
+        
+        bottom_panel.columnconfigure(4, weight=0)
+        bottom_panel.columnconfigure(5, weight=0)
+        bottom_panel.columnconfigure(6, weight=0)
+
+        self.test_shot_button = self._create_button(
+            parent=bottom_panel,
+            text="Test Shot",
+            command=self._on_test_shot_clicked,
+            background_color=PRIMARY_BUTTON_COLOR,
+        )
+        self.test_shot_button.grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=(0, 4),
+            pady=(8, 0),
         )
 
         self.stop_training_button = self._create_button(
@@ -570,9 +686,10 @@ class TrainingPage(tk.Frame):
             background_color=STOP_BUTTON_COLOR,
         )
         self.stop_training_button.grid(
-            row=0,
-            column=5,
+            row=1,
+            column=1,
             padx=4,
+            pady=(8, 0),
         )
 
         self.back_button = self._create_button(
@@ -582,9 +699,12 @@ class TrainingPage(tk.Frame):
             background_color=BACK_BUTTON_COLOR,
         )
         self.back_button.grid(
-            row=0,
-            column=6,
+            row=1,
+            column=2,
+            columnspan=2,
+            sticky="e",
             padx=(18, 0),
+            pady=(8, 0),
         )
 
     def _create_button(self, parent, text, command, background_color):
@@ -620,6 +740,42 @@ class TrainingPage(tk.Frame):
             self.ball_speed_value_label.config(
                 text=str(int(float(value))),
             )
+
+    def _on_pace_minus_clicked(self):
+        """
+        Decrease pace by 0.5 seconds (minimum 0.5).
+        """
+
+        current = self.pace_seconds_var.get()
+        new_value = max(0.5, current - 0.5)
+        self.pace_seconds_var.set(new_value)
+
+    def _on_pace_plus_clicked(self):
+        """
+        Increase pace by 0.5 seconds (maximum 3.0).
+        """
+
+        current = self.pace_seconds_var.get()
+        new_value = min(3.0, current + 0.5)
+        self.pace_seconds_var.set(new_value)
+
+    def _on_shots_minus_clicked(self):
+        """
+        Decrease number of shots by 1 (minimum 2).
+        """
+
+        current = self.number_of_shots_var.get()
+        new_value = max(2, current - 1)
+        self.number_of_shots_var.set(new_value)
+
+    def _on_shots_plus_clicked(self):
+        """
+        Increase number of shots by 1 (maximum 10).
+        """
+
+        current = self.number_of_shots_var.get()
+        new_value = min(10, current + 1)
+        self.number_of_shots_var.set(new_value)
 
     def _on_start_preview_clicked(self):
         """
