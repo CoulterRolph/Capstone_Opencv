@@ -57,6 +57,7 @@ for path_to_add in paths_to_add:
 
 import gui_config
 from review_controller import ReviewController
+from scrollable_frame import ScrollableFrame
 
 
 # ============================================================
@@ -173,12 +174,12 @@ class ReviewPage(tk.Frame):
         Build the main light display area.
         """
 
-        display_frame = tk.Frame(
+        scroll_container = ScrollableFrame(
             self,
             bg=gui_config.DISPLAY_BACKGROUND_COLOR,
         )
 
-        display_frame.pack(
+        scroll_container.pack(
             fill="both",
             expand=True,
             padx=gui_config.CARD_PAD_X,
@@ -187,6 +188,8 @@ class ReviewPage(tk.Frame):
                 gui_config.CARD_PAD_Y_BOTTOM,
             ),
         )
+
+        display_frame = scroll_container.inner_frame
 
         self._build_display_intro(
             parent=display_frame,

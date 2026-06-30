@@ -29,6 +29,7 @@ from pathlib import Path
 import sys
 import tkinter as tk
 from tkinter import messagebox
+import cv2
 
 
 # ============================================================
@@ -52,6 +53,7 @@ if str(CONTROLLER_DIR) not in sys.path:
 
 import gui_config
 from training_controller import TrainingController
+from scrollable_frame import ScrollableFrame
 
 
 # ============================================================
@@ -148,6 +150,7 @@ class TrainingPage(tk.Frame):
 
         self.preview_image_label = None
         self.preview_photo_image = None
+        self.preview_box = None
 
         self.start_preview_button = None
         self.stop_preview_button = None
@@ -223,17 +226,18 @@ class TrainingPage(tk.Frame):
         Build the central settings and preview area.
         """
 
-        main_frame = tk.Frame(
+        scroll_container = ScrollableFrame(
             self,
             bg=APP_BACKGROUND_COLOR,
         )
-        main_frame.pack(
+        scroll_container.pack(
             fill="both",
             expand=True,
             padx=28,
             pady=12,
         )
 
+        main_frame = scroll_container.inner_frame
         main_frame.columnconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
         main_frame.rowconfigure(0, weight=1)
@@ -545,6 +549,7 @@ class TrainingPage(tk.Frame):
             expand=True,
         )
         preview_box.pack_propagate(False)
+        self.preview_box = preview_box
 
         self.preview_image_label = tk.Label(
             preview_box,
@@ -556,6 +561,7 @@ class TrainingPage(tk.Frame):
         )
         self.preview_image_label.pack(
             expand=True,
+            fill="both",
         )
 
         self.preview_status_label = tk.Label(
@@ -1156,8 +1162,7 @@ class TrainingPage(tk.Frame):
         """
         Convert an RGB numpy frame into a Tkinter PhotoImage.
 
-        This avoids using Pillow. The numpy RGB bytes are wrapped as a
-        binary PPM image, which Tkinter can load directly.
+        Resize the frame to fit the preview box while preserving aspect ratio.
         """
 
         if frame_rgb is None:
@@ -1176,50 +1181,61 @@ class TrainingPage(tk.Frame):
 
         rgb_frame_3_channel = frame_rgb[:, :, :3]
 
-        ppm_header = f"P6\n{width} {height}\n255\n".encode("ascii")
-        ppm_data = ppm_header + rgb_frame_3_channel.tobytes()
+        target_width, target_height = self._get_preview_target_size()
+        resized_frame = self._resize_frame_to_fit_preview(
+            rgb_frame_3_channel,
+            width,
+            height,
+            target_width,
+            target_height,
+        )
 
-        photo_image = tk.PhotoImage(
+        new_height, new_width = resized_frame.shape[:2]
+
+        ppm_header = f"P6\n{new_width} {new_height}\n255\n".encode("ascii")
+        ppm_data = ppm_header + resized_frame.tobytes()
+
+        return tk.PhotoImage(
             data=ppm_data,
             format="PPM",
         )
 
-        subsample_factor = self._calculate_preview_subsample_factor(
-            image_width=width,
-            image_height=height,
-        )
-
-        if subsample_factor > 1:
-            photo_image = photo_image.subsample(
-                subsample_factor,
-                subsample_factor,
-            )
-
-        return photo_image
-
-    def _calculate_preview_subsample_factor(self, image_width, image_height):
+    def _get_preview_target_size(self):
         """
-        Calculate an integer subsample factor so the frame fits the card.
+        Get the current preview box size, falling back to the configured max.
         """
 
-        if PREVIEW_DISPLAY_MAX_WIDTH <= 0 or PREVIEW_DISPLAY_MAX_HEIGHT <= 0:
-            return 1
+        if self.preview_box is not None:
+            width = self.preview_box.winfo_width()
+            height = self.preview_box.winfo_height()
 
-        width_factor = max(
-            1,
-            (int(image_width) + PREVIEW_DISPLAY_MAX_WIDTH - 1)
-            // PREVIEW_DISPLAY_MAX_WIDTH,
-        )
+            if width > 1 and height > 1:
+                return width, height
 
-        height_factor = max(
-            1,
-            (int(image_height) + PREVIEW_DISPLAY_MAX_HEIGHT - 1)
-            // PREVIEW_DISPLAY_MAX_HEIGHT,
-        )
+        return PREVIEW_DISPLAY_MAX_WIDTH, PREVIEW_DISPLAY_MAX_HEIGHT
 
-        return max(
-            width_factor,
-            height_factor,
+    def _resize_frame_to_fit_preview(self, frame, original_width, original_height, target_width, target_height):
+        """
+        Resize the frame to fit inside the preview box while preserving aspect ratio.
+        """
+
+        if target_width <= 0 or target_height <= 0:
+            return frame
+
+        scale_width = target_width / original_width
+        scale_height = target_height / original_height
+        scale_factor = min(scale_width, scale_height)
+
+        if scale_factor >= 1.0:
+            return frame
+
+        new_width = max(1, int(original_width * scale_factor))
+        new_height = max(1, int(original_height * scale_factor))
+
+        return cv2.resize(
+            frame,
+            (new_width, new_height),
+            interpolation=cv2.INTER_AREA,
         )
 
     def _reset_preview_display_placeholder(self):
