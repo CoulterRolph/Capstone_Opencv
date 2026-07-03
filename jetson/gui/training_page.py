@@ -142,6 +142,7 @@ class TrainingPage(tk.Frame):
         self.ball_speed_var = tk.IntVar(value=75)
         self.pace_seconds_var = tk.DoubleVar(value=1.5)
         self.number_of_shots_var = tk.IntVar(value=10)
+        self.session_name_var = tk.StringVar(value="")
 
         self.ball_speed_value_label = None
         self.preview_status_label = None
@@ -275,9 +276,51 @@ class TrainingPage(tk.Frame):
             pady=(0, 18),
         )
 
+        self._build_session_name_control(settings_card)
         self._build_ball_speed_control(settings_card)
         self._build_pace_control(settings_card)
         self._build_number_of_shots_control(settings_card)
+
+    def _build_session_name_control(self, parent):
+        """
+        Build the training session name input.
+        """
+
+        row_frame = tk.Frame(
+            parent,
+            bg=CARD_BACKGROUND_COLOR,
+        )
+        row_frame.pack(
+            fill="x",
+            pady=(0, 18),
+        )
+
+        label = tk.Label(
+            row_frame,
+            text="Session Name",
+            font=NORMAL_FONT,
+            fg=TEXT_DARK_COLOR,
+            bg=CARD_BACKGROUND_COLOR,
+        )
+        label.pack(
+            anchor="w",
+        )
+
+        entry = tk.Entry(
+            row_frame,
+            textvariable=self.session_name_var,
+            font=NORMAL_FONT,
+            fg=TEXT_DARK_COLOR,
+            bg="white",
+            insertbackground=TEXT_DARK_COLOR,
+            relief="solid",
+            bd=1,
+            width=36,
+        )
+        entry.pack(
+            fill="x",
+            pady=(6, 0),
+        )
 
     def _build_ball_speed_control(self, parent):
         """
@@ -824,13 +867,14 @@ class TrainingPage(tk.Frame):
         if training_values is None:
             return
 
-        ball_speed, pace_seconds, number_of_shots = training_values
+        ball_speed, pace_seconds, number_of_shots, session_name = training_values
 
         try:
             self.training_controller.start_training(
                 ball_speed=ball_speed,
                 pace_seconds=pace_seconds,
                 number_of_shots=number_of_shots,
+                session_name=session_name,
             )
 
             self._set_training_button_state()
@@ -924,6 +968,7 @@ class TrainingPage(tk.Frame):
             ball_speed = int(self.ball_speed_var.get())
             pace_seconds = float(self.pace_seconds_var.get())
             number_of_shots = int(self.number_of_shots_var.get())
+            session_name = self.session_name_var.get().strip()
 
         except ValueError:
             self._show_error_message(
@@ -937,7 +982,7 @@ class TrainingPage(tk.Frame):
             )
             return None
 
-        return ball_speed, pace_seconds, number_of_shots
+        return ball_speed, pace_seconds, number_of_shots, session_name
 
     def _read_test_shot_values_from_gui(self):
         """

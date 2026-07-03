@@ -33,8 +33,10 @@ Important:
 # ============================================================
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import importlib.util
+import json
 import queue
 import sys
 import time
@@ -76,6 +78,7 @@ for path_to_add in paths_to_add:
 # ============================================================
 
 import training_controller_config
+import recording_config
 
 
 # ============================================================
@@ -139,6 +142,18 @@ class TrainingSettings:
             f"{self.number_of_shots}"
         )
 
+    def to_dict(self):
+        """
+        Convert settings into a JSON-friendly dictionary.
+        """
+
+        return {
+            "ball_speed": self.ball_speed,
+            "pace_seconds": self.pace_seconds,
+            "pace_milliseconds": self.pace_milliseconds,
+            "number_of_shots": self.number_of_shots,
+        }
+
 
 # ============================================================
 # Training controller
@@ -165,6 +180,7 @@ class TrainingController:
         self.state = training_controller_config.STATE_IDLE
 
         self.current_settings = None
+        self.current_session_name = None
         self.last_recording_path = None
         self.last_stm32_response = None
 
@@ -491,6 +507,7 @@ class TrainingController:
         ball_speed,
         pace_seconds,
         number_of_shots,
+        session_name=None,
     ):
         """
         Start training.
@@ -565,6 +582,8 @@ class TrainingController:
                 self.state = training_controller_config.STATE_ERROR
 
                 return False
+
+            self._save_session_metadata_if_possible()
 
             self._put_status_message(
                 training_controller_config.STATUS_STM32_SENDING_START,
@@ -1083,6 +1102,81 @@ class TrainingController:
             )
 
         return True
+
+    def _normalize_session_name(self, session_name):
+        """
+        Normalize a user-provided session name and apply a default if blank.
+        """
+
+        if session_name is None:
+            session_name = ""
+
+        session_name = str(session_name).strip()
+
+        if session_name == "":
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            return f"Training Session {timestamp}"
+
+        return session_name
+
+    def _build_session_metadata_path(self, recording_path):
+        """
+        Build a metadata JSON path next to the recorded MKV.
+        """
+
+        recording_path = Path(recording_path)
+        return recording_path.with_name(f"{recording_path.stem}_session.json")
+
+    def _build_session_metadata(self):
+        """
+        Create the per-recording session metadata dictionary.
+        """
+
+        return {
+            "session": {
+                "session_name": self.current_session_name,
+                "recording_video_path": str(self.last_recording_path),
+                "recording_time": datetime.now().isoformat(timespec="seconds"),
+                "json_version": "1.0",
+            },
+            "training_settings": self.current_settings.to_dict() if self.current_settings is not None else {},
+            "recording_settings": {
+                "camera_device": str(recording_config.CAMERA_DEVICE),
+                "recording_width": recording_config.RECORDING_WIDTH,
+                "recording_height": recording_config.RECORDING_HEIGHT,
+                "recording_fps": recording_config.RECORDING_FPS,
+            },
+        }
+
+    def _save_session_metadata_if_possible(self):
+        """
+        Save session metadata after recording has started.
+        """
+
+        if self.last_recording_path is None:
+            self._put_warning_message(
+                "Recording metadata was not saved because no recording path is available."
+            )
+            return False
+
+        try:
+            metadata = self._build_session_metadata()
+            metadata_path = self._build_session_metadata_path(self.last_recording_path)
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+                json.dump(metadata, metadata_file, indent=2)
+
+            self._put_status_message(
+                f"Saved session metadata: {metadata_path.name}"
+            )
+            return True
+
+        except Exception as error:
+            self._put_warning_message(
+                f"Failed to save session metadata: {error}"
+            )
+            return False
 
 
     def _stop_training_recording(self):
