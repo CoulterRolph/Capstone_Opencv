@@ -1130,6 +1130,9 @@ class TrainingController:
     def _build_session_metadata(self):
         """
         Create the per-recording session metadata dictionary.
+
+        This includes placeholder fields for analysis results that will be
+        populated later when analysis runs on the recorded video.
         """
 
         return {
@@ -1137,7 +1140,7 @@ class TrainingController:
                 "session_name": self.current_session_name,
                 "recording_video_path": str(self.last_recording_path),
                 "recording_time": datetime.now().isoformat(timespec="seconds"),
-                "json_version": "1.0",
+                "json_version": "2.0",
             },
             "training_settings": self.current_settings.to_dict() if self.current_settings is not None else {},
             "recording_settings": {
@@ -1146,6 +1149,33 @@ class TrainingController:
                 "recording_height": recording_config.RECORDING_HEIGHT,
                 "recording_fps": recording_config.RECORDING_FPS,
             },
+            "video": {},
+            "table": {
+                "table_detected": False,
+                "corners": {},
+            },
+            "homography": {
+                "homography_found": False,
+                "homography_matrix": None,
+                "source_points": None,
+                "destination_points": None,
+                "output_size": None,
+            },
+            "bounces": [],
+            "ball_tracking": {
+                "summary": {},
+                "recent_positions": [],
+                "active_trail": [],
+            },
+            "summary": {
+                "total_bounces": 0,
+            },
+            "quality_flags": {
+                "table_detection_failed": False,
+                "homography_failed": False,
+                "no_bounces_detected": True,
+            },
+            "heatmap": None,
         }
 
     def _save_session_metadata_if_possible(self):

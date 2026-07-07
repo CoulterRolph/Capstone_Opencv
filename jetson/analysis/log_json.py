@@ -359,6 +359,164 @@ def load_analysis_log(json_path):
 # Convenience function
 # ============================================================
 
+# ============================================================
+# Session JSON integration (Training + Analysis merged)
+# ============================================================
+
+def build_session_metadata_path(video_path):
+    """
+    Build the session metadata JSON path next to the recorded MKV.
+
+    Example:
+        Input video:
+            capture/recordings/sample_001.mkv
+
+        Output JSON path:
+            capture/recordings/sample_001_session.json
+    """
+
+    video_path = Path(video_path)
+    return video_path.with_name(f"{video_path.stem}_session.json")
+
+
+def load_session_log(video_path):
+    """
+    Load an existing session JSON file.
+
+    This loads the merged training + analysis JSON created by training_controller.py
+    and updated by analysis.
+
+    Args:
+        video_path: Path to the recorded video file.
+
+    Returns:
+        session_log: Dictionary containing training settings and analysis results.
+
+    Raises:
+        FileNotFoundError: If the session JSON does not exist.
+    """
+
+    session_json_path = build_session_metadata_path(video_path)
+
+    if not session_json_path.exists():
+        raise FileNotFoundError(
+            f"Session metadata JSON does not exist: {session_json_path}"
+        )
+
+    with session_json_path.open("r", encoding="utf-8") as json_file:
+        session_log = json.load(json_file)
+
+    return session_log
+
+
+def merge_analysis_into_session(
+    session_log,
+    analysis_result,
+):
+    """
+    Merge analysis results into an existing session JSON.
+
+    This takes the training session data and populates the analysis fields
+    with table detection, homography, ball tracking, and bounce data.
+
+    Args:
+        session_log: Session dictionary created during training.
+        analysis_result: Dictionary returned by analysis.run_analysis().
+
+    Returns:
+        updated_session_log: Session log with analysis results merged in.
+    """
+
+    if analysis_result is None:
+        return session_log
+
+    # Merge video information
+    if "video_info" in analysis_result:
+        session_log["video"] = make_json_safe(analysis_result["video_info"])
+
+    # Merge table detection
+    detected_table = analysis_result.get("detected_table")
+    if detected_table is not None:
+        session_log = add_table_to_log(
+            analysis_log=session_log,
+            detected_table=detected_table,
+        )
+
+    # Merge homography
+    homography_result = analysis_result.get("homography_result")
+    if homography_result is not None:
+        session_log = add_homography_to_log(
+            analysis_log=session_log,
+            homography_result=homography_result,
+        )
+
+    # Merge ball tracking summary
+    ball_tracking = analysis_result.get("ball_tracking", {})
+    if ball_tracking:
+        session_log["ball_tracking"]["summary"] = make_json_safe(
+            ball_tracking.get("summary", {})
+        )
+        session_log["ball_tracking"]["recent_positions"] = make_json_safe(
+            ball_tracking.get("recent_positions", [])
+        )
+        session_log["ball_tracking"]["active_trail"] = make_json_safe(
+            ball_tracking.get("active_trail", [])
+        )
+
+    # Merge bounce events
+    bounce_tracking = analysis_result.get("bounce_tracking", {})
+    if bounce_tracking:
+        bounce_events = bounce_tracking.get("bounce_events", [])
+        session_log["bounces"] = make_json_safe(bounce_events)
+
+        # Merge heatmap if available
+        heatmap_result = bounce_tracking.get("heatmap")
+        if heatmap_result is not None:
+            session_log["heatmap"] = make_json_safe(heatmap_result)
+
+    # Update summary metrics
+    update_summary_metrics(session_log)
+
+    return session_log
+
+
+def save_session_log(session_log, video_path):
+    """
+    Save the merged session log back to its JSON file.
+
+    Args:
+        session_log: Session dictionary with both training and analysis data.
+        video_path: Path to the recorded video (used to determine JSON path).
+
+    Returns:
+        session_json_path: Path to the saved JSON file.
+    """
+
+    session_json_path = build_session_metadata_path(video_path)
+
+    session_json_path.parent.mkdir(parents=True, exist_ok=True)
+
+    json_safe_log = make_json_safe(session_log)
+
+    with session_json_path.open("w", encoding="utf-8") as json_file:
+        json.dump(
+            json_safe_log,
+            json_file,
+            indent=2,
+        )
+
+    print(
+        f"Session metadata saved to: {session_json_path}",
+        flush=True,
+    )
+
+    return session_json_path
+
+
+# ============================================================
+# Convenience function (legacy - kept for backward compatibility)
+# ============================================================
+
 def save_table_homography_log(
     video_path,
     video_info,

@@ -4,14 +4,15 @@
 Review page.
 
 Current scope:
-- List saved heatmap PNG files from review/heatmaps.
-- Let the user select a heatmap from a dropdown.
-- Preview the selected heatmap inside Tkinter.
+- List saved training sessions from session JSON files.
+- Let the user select a training session from a dropdown.
+- Display key metrics from the session JSON.
+- Preview the heatmap if available.
 
 Future scope:
 - Open annotated videos.
-- Load JSON analysis results.
-- Show feedback summary.
+- Generate reports.
+- Compare multiple sessions.
 """
 
 
@@ -66,7 +67,7 @@ from scrollable_frame import ScrollableFrame
 
 class ReviewPage(tk.Frame):
     """
-    Review page for saved analysis outputs.
+    Review page for saved training sessions and analysis outputs.
     """
 
     def __init__(self, parent, page_manager):
@@ -82,23 +83,26 @@ class ReviewPage(tk.Frame):
         self.page_manager = page_manager
         self.review_controller = ReviewController()
 
-        self.heatmap_paths_by_name = {}
-        self.selected_heatmap_name = tk.StringVar()
+        self.session_paths_by_name = {}
+        self.selected_session_name = tk.StringVar()
+        self.current_session_data = None
 
         self.status_label = None
-        self.heatmap_dropdown = None
-        self.refresh_heatmaps_button = None
-        self.preview_heatmap_button = None
+        self.session_dropdown = None
+        self.refresh_sessions_button = None
         self.back_button = None
+
+        # Stats display labels
+        self.stat_boxes = []
+
+        # Heatmap preview
         self.preview_label = None
         self.preview_frame = None
-
-        # Keep a reference to the image so Tkinter does not garbage collect it.
         self.preview_image = None
 
         self._configure_ttk_style()
         self._build_page()
-        self._load_heatmap_dropdown()
+        self._load_session_dropdown()
 
     # --------------------------------------------------------
     # Page layout
@@ -146,7 +150,7 @@ class ReviewPage(tk.Frame):
 
         title_label = tk.Label(
             header_frame,
-            text=gui_config.REVIEW_PAGE_TITLE_TEXT,
+            text="Review Training Sessions",
             font=gui_config.HEADER_TITLE_FONT,
             bg=gui_config.APP_BACKGROUND_COLOR,
             fg=gui_config.TEXT_ON_DARK_PRIMARY,
@@ -158,7 +162,7 @@ class ReviewPage(tk.Frame):
 
         subtitle_label = tk.Label(
             header_frame,
-            text=gui_config.REVIEW_PAGE_SUBTITLE_TEXT,
+            text="Select a training session to view analysis results and metrics.",
             font=gui_config.HEADER_SUBTITLE_FONT,
             bg=gui_config.APP_BACKGROUND_COLOR,
             fg=gui_config.TEXT_ON_DARK_SECONDARY,
@@ -191,64 +195,21 @@ class ReviewPage(tk.Frame):
 
         display_frame = scroll_container.inner_frame
 
-        self._build_display_intro(
+        self._build_session_selection_section(
             parent=display_frame,
         )
 
-        self._build_heatmap_selection_section(
+        self._build_stats_section(
             parent=display_frame,
         )
 
-        self._build_preview_section(
+        self._build_heatmap_section(
             parent=display_frame,
         )
 
-    def _build_display_intro(self, parent):
+    def _build_session_selection_section(self, parent):
         """
-        Add display title and description.
-        """
-
-        intro_frame = tk.Frame(
-            parent,
-            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
-        )
-
-        intro_frame.pack(
-            fill="x",
-            padx=30,
-            pady=(28, 12),
-        )
-
-        title_label = tk.Label(
-            intro_frame,
-            text=gui_config.REVIEW_DISPLAY_TITLE_TEXT,
-            font=gui_config.DISPLAY_TITLE_FONT,
-            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
-            fg=gui_config.TEXT_ON_LIGHT_PRIMARY,
-        )
-
-        title_label.pack(
-            anchor="w",
-        )
-
-        body_label = tk.Label(
-            intro_frame,
-            text=gui_config.REVIEW_DISPLAY_BODY_TEXT,
-            font=gui_config.DISPLAY_BODY_FONT,
-            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
-            fg=gui_config.TEXT_ON_LIGHT_SECONDARY,
-            wraplength=850,
-            justify="left",
-        )
-
-        body_label.pack(
-            anchor="w",
-            pady=(8, 0),
-        )
-
-    def _build_heatmap_selection_section(self, parent):
-        """
-        Add heatmap dropdown.
+        Add session dropdown.
         """
 
         selection_panel = tk.Frame(
@@ -264,7 +225,7 @@ class ReviewPage(tk.Frame):
 
         selection_label = tk.Label(
             selection_panel,
-            text=gui_config.REVIEW_HEATMAP_SELECTION_LABEL_TEXT,
+            text="Select Training Session:",
             font=gui_config.LABEL_FONT,
             bg=gui_config.PANEL_BACKGROUND_COLOR,
             fg=gui_config.TEXT_ON_DARK_PRIMARY,
@@ -276,55 +237,172 @@ class ReviewPage(tk.Frame):
             pady=(14, 6),
         )
 
-        self.heatmap_dropdown = ttk.Combobox(
+        self.session_dropdown = ttk.Combobox(
             selection_panel,
-            textvariable=self.selected_heatmap_name,
+            textvariable=self.selected_session_name,
             width=gui_config.WIDE_DROPDOWN_WIDTH,
             state="readonly",
             style="TCubed.TCombobox",
         )
 
-        self.heatmap_dropdown.pack(
+        self.session_dropdown.pack(
             fill="x",
             padx=16,
             pady=(0, 14),
         )
 
-    def _build_preview_section(self, parent):
+        # Bind selection change
+        self.session_dropdown.bind(
+            "<<ComboboxSelected>>",
+            lambda e: self._on_session_selected(),
+        )
+
+    def _build_stats_section(self, parent):
         """
-        Add image preview area.
+        Build 3 stats boxes for key metrics.
         """
 
-        preview_outer_frame = tk.Frame(
+        stats_outer_frame = tk.Frame(
             parent,
             bg=gui_config.DISPLAY_BACKGROUND_COLOR,
         )
 
-        preview_outer_frame.pack(
-            fill="both",
-            expand=True,
+        stats_outer_frame.pack(
+            fill="x",
             padx=30,
-            pady=(0, 25),
+            pady=(20, 12),
         )
 
-        preview_label_title = tk.Label(
-            preview_outer_frame,
-            text="Preview",
+        stats_title = tk.Label(
+            stats_outer_frame,
+            text="Session Metrics",
             font=gui_config.LABEL_FONT,
             bg=gui_config.DISPLAY_BACKGROUND_COLOR,
             fg=gui_config.TEXT_ON_LIGHT_PRIMARY,
         )
 
-        preview_label_title.pack(
+        stats_title.pack(
+            anchor="w",
+            pady=(0, 12),
+        )
+
+        stats_container = tk.Frame(
+            stats_outer_frame,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+        )
+
+        stats_container.pack(
+            fill="x",
+        )
+
+        stats_container.columnconfigure(0, weight=1)
+        stats_container.columnconfigure(1, weight=1)
+        stats_container.columnconfigure(2, weight=1)
+
+        # Create 3 stat boxes
+        stat_names = [
+            "Total Bounces",
+            "Ball Detection Rate",
+            "Table Status",
+        ]
+
+        for i, stat_name in enumerate(stat_names):
+            stat_box = self._create_stat_box(
+                parent=stats_container,
+                title=stat_name,
+                column=i,
+            )
+            self.stat_boxes.append(stat_box)
+
+    def _create_stat_box(self, parent, title, column):
+        """
+        Create a single stat box frame.
+        """
+
+        box_frame = tk.Frame(
+            parent,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            relief="flat",
+            bd=0,
+        )
+
+        box_frame.grid(
+            row=0,
+            column=column,
+            sticky="nsew",
+            padx=(0 if column == 0 else 6, 0 if column == 2 else 6),
+        )
+
+        title_label = tk.Label(
+            box_frame,
+            text=title,
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_SECONDARY,
+        )
+
+        title_label.pack(
+            fill="x",
+            padx=12,
+            pady=(12, 6),
+        )
+
+        value_label = tk.Label(
+            box_frame,
+            text="--",
+            font=("Arial", 18, "bold"),
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
+        )
+
+        value_label.pack(
+            fill="x",
+            padx=12,
+            pady=(0, 12),
+        )
+
+        return {
+            "frame": box_frame,
+            "title": title_label,
+            "value": value_label,
+        }
+
+    def _build_heatmap_section(self, parent):
+        """
+        Build heatmap preview section.
+        """
+
+        heatmap_outer_frame = tk.Frame(
+            parent,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+        )
+
+        heatmap_outer_frame.pack(
+            fill="both",
+            expand=True,
+            padx=30,
+            pady=(20, 25),
+        )
+
+        heatmap_label_title = tk.Label(
+            heatmap_outer_frame,
+            text="Heatmap Preview",
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_PRIMARY,
+        )
+
+        heatmap_label_title.pack(
             anchor="w",
             pady=(0, 6),
         )
 
         self.preview_frame = tk.Frame(
-            preview_outer_frame,
+            heatmap_outer_frame,
             bg=gui_config.PANEL_BACKGROUND_COLOR,
             bd=0,
             relief="flat",
+            height=400,
         )
 
         self.preview_frame.pack(
@@ -334,7 +412,7 @@ class ReviewPage(tk.Frame):
 
         self.preview_label = tk.Label(
             self.preview_frame,
-            text="No heatmap preview loaded.",
+            text="No session selected.",
             font=gui_config.DISPLAY_BODY_FONT,
             bg=gui_config.PANEL_BACKGROUND_COLOR,
             fg=gui_config.TEXT_ON_DARK_SECONDARY,
@@ -365,7 +443,7 @@ class ReviewPage(tk.Frame):
 
         self.status_label = tk.Label(
             bottom_panel,
-            text=gui_config.REVIEW_IDLE_STATUS_TEXT,
+            text="Ready",
             font=gui_config.STATUS_FONT,
             bg=gui_config.PANEL_BACKGROUND_COLOR,
             fg=gui_config.STATUS_IDLE_COLOR,
@@ -388,51 +466,33 @@ class ReviewPage(tk.Frame):
             pady=12,
         )
 
-        for column_index in range(3):
-            button_frame.columnconfigure(
-                column_index,
-                weight=1,
-            )
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
 
-
-        self.refresh_heatmaps_button = self._make_action_button(
+        self.refresh_sessions_button = self._make_action_button(
             parent=button_frame,
-            text=gui_config.REFRESH_HEATMAPS_BUTTON_TEXT,
+            text="Refresh Sessions",
             color=gui_config.PRIMARY_BUTTON_COLOR,
-            command=self._on_refresh_heatmaps_clicked,
+            command=self._on_refresh_sessions_clicked,
         )
 
-        self.refresh_heatmaps_button.grid(
+        self.refresh_sessions_button.grid(
             row=0,
             column=0,
             padx=8,
             sticky="ew",
         )
 
-        self.preview_heatmap_button = self._make_action_button(
-            parent=button_frame,
-            text=gui_config.PREVIEW_HEATMAP_BUTTON_TEXT,
-            color=gui_config.REVIEW_BUTTON_COLOR,
-            command=self._on_preview_heatmap_clicked,
-        )
-
-        self.preview_heatmap_button.grid(
-            row=0,
-            column=1,
-            padx=8,
-            sticky="ew",
-        )
-
         self.back_button = self._make_action_button(
             parent=button_frame,
-            text=gui_config.BACK_TO_HOME_BUTTON_TEXT,
+            text="Back to Home",
             color=gui_config.SECONDARY_BUTTON_COLOR,
             command=self._on_back_clicked,
         )
 
         self.back_button.grid(
             row=0,
-            column=2,
+            column=1,
             padx=8,
             sticky="ew",
         )
@@ -443,7 +503,7 @@ class ReviewPage(tk.Frame):
 
     def _make_action_button(self, parent, text, color, command):
         """
-        Create a styled dashboard button.
+        Create a styled action button.
         """
 
         return tk.Button(
@@ -463,62 +523,234 @@ class ReviewPage(tk.Frame):
         )
 
     # --------------------------------------------------------
-    # Heatmap selection
+    # Session selection
     # --------------------------------------------------------
 
-    def _load_heatmap_dropdown(self):
+    def _load_session_dropdown(self):
         """
-        Load available heatmap files into the dropdown.
+        Load available sessions into the dropdown.
         """
 
-        heatmap_paths = self.review_controller.list_available_heatmaps()
+        session_paths = self.review_controller.list_available_sessions()
 
-        self.heatmap_paths_by_name = {}
-        heatmap_names = []
+        self.session_paths_by_name = {}
+        session_names = []
 
-        for heatmap_path in heatmap_paths:
-            heatmap_name = heatmap_path.name
-            self.heatmap_paths_by_name[heatmap_name] = heatmap_path
+        for session_path in session_paths:
+            session_name = session_path.stem.replace("_session", "")
+            self.session_paths_by_name[session_name] = session_path
 
-            heatmap_names.append(
-                heatmap_name,
+            session_names.append(
+                session_name,
             )
 
-        self.heatmap_dropdown["values"] = heatmap_names
+        self.session_dropdown["values"] = session_names
 
-        if heatmap_names:
-            self.selected_heatmap_name.set(
-                heatmap_names[0],
+        if session_names:
+            self.selected_session_name.set(
+                session_names[0],
             )
 
             self._set_status(
-                f"Status: Loaded {len(heatmap_names)} heatmap(s).",
+                f"Loaded {len(session_names)} session(s).",
                 gui_config.STATUS_COMPLETE_COLOR,
             )
 
+            # Load the first session
+            self._on_session_selected()
+
         else:
-            self.selected_heatmap_name.set(
-                "",
-            )
+            self.selected_session_name.set("")
 
             self._set_status(
-                "Status: No heatmaps found in review/heatmaps.",
+                "No training sessions found.",
                 gui_config.STATUS_WARNING_COLOR,
             )
 
-    def _get_selected_heatmap_path(self):
+            self._clear_display()
+
+    def _get_selected_session_path(self):
         """
-        Return the full path of the selected heatmap.
+        Return the full path of the selected session.
         """
 
-        selected_name = self.selected_heatmap_name.get()
+        selected_name = self.selected_session_name.get()
 
         if not selected_name:
             return None
 
-        return self.heatmap_paths_by_name.get(
-            selected_name,
+        return self.session_paths_by_name.get(selected_name)
+
+    def _on_session_selected(self):
+        """
+        Load and display the selected session.
+        """
+
+        selected_path = self._get_selected_session_path()
+
+        if selected_path is None:
+            self._clear_display()
+            return
+
+        try:
+            session_data = self.review_controller.load_session_data(selected_path)
+            self.current_session_data = session_data
+
+            self._display_session_stats(session_data)
+            self._display_session_heatmap(session_data)
+
+            self._set_status(
+                f"Loaded: {selected_path.name}",
+                gui_config.STATUS_COMPLETE_COLOR,
+            )
+
+        except Exception as error:
+            self._set_status(
+                f"Failed to load session: {error}",
+                gui_config.STATUS_FAILED_COLOR,
+            )
+
+            self._clear_display()
+
+    def _display_session_stats(self, session_data):
+        """
+        Display key stats from the session in the stat boxes.
+        """
+
+        if session_data is None:
+            return
+
+        stats = self.review_controller.extract_stats_from_session(session_data)
+
+        # Update stat box 1: Total Bounces
+        if len(self.stat_boxes) > 0:
+            total_bounces = stats.get("total_bounces", 0)
+            self.stat_boxes[0]["value"].config(
+                text=str(total_bounces),
+            )
+
+        # Update stat box 2: Ball Detection Rate
+        if len(self.stat_boxes) > 1:
+            detection_rate = stats.get("detection_rate", 0.0)
+            self.stat_boxes[1]["value"].config(
+                text=f"{detection_rate:.1%}",
+            )
+
+        # Update stat box 3: Table Status
+        if len(self.stat_boxes) > 2:
+            table_detected = stats.get("table_detected", False)
+            status_text = "Detected" if table_detected else "Not Detected"
+            self.stat_boxes[2]["value"].config(
+                text=status_text,
+            )
+
+    def _display_session_heatmap(self, session_data):
+        """
+        Display the heatmap from the session if available.
+        """
+
+        if session_data is None:
+            return
+
+        heatmap_path = self.review_controller.get_heatmap_path_from_session(
+            session_data
         )
+
+        if heatmap_path is None or not heatmap_path.exists():
+            self.preview_label.config(
+                image="",
+                text="No heatmap available for this session.",
+                fg=gui_config.TEXT_ON_DARK_SECONDARY,
+            )
+            self.preview_image = None
+            return
+
+        try:
+            self._load_heatmap_preview(heatmap_path)
+
+        except Exception as error:
+            self.preview_label.config(
+                image="",
+                text=f"Failed to load heatmap: {error}",
+                fg=gui_config.TEXT_ON_DARK_SECONDARY,
+            )
+            self.preview_image = None
+
+    def _load_heatmap_preview(self, heatmap_path):
+        """
+        Load a PNG heatmap into the preview label.
+        """
+
+        heatmap_path = Path(heatmap_path)
+
+        if not heatmap_path.exists():
+            raise FileNotFoundError(f"Heatmap file does not exist: {heatmap_path}")
+
+        image = tk.PhotoImage(
+            file=str(heatmap_path),
+        )
+
+        image = self._subsample_image_to_preview_size(image)
+
+        self.preview_image = image
+
+        self.preview_label.config(
+            image=self.preview_image,
+            text="",
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
+
+    def _subsample_image_to_preview_size(self, image):
+        """
+        Shrink image using integer subsampling if it is too large.
+        """
+
+        image_width = image.width()
+        image_height = image.height()
+
+        width_factor = self._calculate_integer_subsample_factor(
+            value=image_width,
+            maximum_value=600,
+        )
+
+        height_factor = self._calculate_integer_subsample_factor(
+            value=image_height,
+            maximum_value=400,
+        )
+
+        subsample_factor = max(width_factor, height_factor)
+
+        if subsample_factor <= 1:
+            return image
+
+        return image.subsample(subsample_factor, subsample_factor)
+
+    def _calculate_integer_subsample_factor(self, value, maximum_value):
+        """
+        Calculate a safe integer subsample factor.
+        """
+
+        if value <= maximum_value:
+            return 1
+
+        return max(1, value // maximum_value)
+
+    def _clear_display(self):
+        """
+        Clear all displayed stats and preview.
+        """
+
+        for stat_box in self.stat_boxes:
+            stat_box["value"].config(text="--")
+
+        self.preview_label.config(
+            image="",
+            text="No session selected.",
+            fg=gui_config.TEXT_ON_DARK_SECONDARY,
+        )
+
+        self.preview_image = None
+        self.current_session_data = None
 
     # --------------------------------------------------------
     # Button callbacks
@@ -533,223 +765,23 @@ class ReviewPage(tk.Frame):
             gui_config.NAVIGATION_PAGE_NAME,
         )
 
-    def _on_refresh_heatmaps_clicked(self):
+    def _on_refresh_sessions_clicked(self):
         """
-        Refresh the heatmap dropdown.
-        """
-
-        self._load_heatmap_dropdown()
-
-    def _on_preview_heatmap_clicked(self):
-        """
-        Preview the selected heatmap inside the GUI.
+        Refresh the session dropdown.
         """
 
-        selected_heatmap_path = self._get_selected_heatmap_path()
-
-        if selected_heatmap_path is None:
-            messagebox.showwarning(
-                gui_config.NO_HEATMAP_SELECTED_TITLE,
-                gui_config.NO_HEATMAP_SELECTED_MESSAGE,
-            )
-
-            return
-
-        try:
-            self._load_heatmap_preview(
-                selected_heatmap_path,
-            )
-
-            self._set_status(
-                f"Status: Preview loaded for {selected_heatmap_path.name}",
-                gui_config.STATUS_COMPLETE_COLOR,
-            )
-
-        except Exception as error:
-            self._set_status(
-                "Status: Heatmap preview failed.",
-                gui_config.STATUS_FAILED_COLOR,
-            )
-
-            messagebox.showerror(
-                gui_config.HEATMAP_PREVIEW_FAILED_TITLE,
-                str(error),
-            )
+        self._load_session_dropdown()
 
     # --------------------------------------------------------
-    # Preview helpers
+    # Status helpers
     # --------------------------------------------------------
 
-    def _load_heatmap_preview(self, heatmap_path):
+    def _set_status(self, message, color):
         """
-        Load a PNG heatmap into the preview label.
-
-        Tkinter PhotoImage supports PNG files directly.
+        Update the status label.
         """
-
-        heatmap_path = Path(heatmap_path)
-
-        if not heatmap_path.exists():
-            raise FileNotFoundError(f"Heatmap file does not exist: {heatmap_path}")
-
-        image = tk.PhotoImage(
-            file=str(heatmap_path),
-        )
-
-        image = self._subsample_image_to_preview_size(
-            image,
-        )
-
-        # Keep reference so the image does not disappear.
-        self.preview_image = image
-
-        self.preview_label.config(
-            image=self.preview_image,
-            text="",
-            bg=gui_config.PANEL_BACKGROUND_COLOR,
-        )
-
-    def _subsample_image_to_preview_size(self, image):
-        """
-        Shrink image using integer subsampling if it is too large.
-
-        This avoids adding Pillow as a dependency.
-        """
-
-        image_width = image.width()
-        image_height = image.height()
-
-        width_factor = self._calculate_integer_subsample_factor(
-            value=image_width,
-            maximum_value=gui_config.HEATMAP_PREVIEW_MAX_WIDTH,
-        )
-
-        height_factor = self._calculate_integer_subsample_factor(
-            value=image_height,
-            maximum_value=gui_config.HEATMAP_PREVIEW_MAX_HEIGHT,
-        )
-
-        subsample_factor = max(
-            width_factor,
-            height_factor,
-        )
-
-        if subsample_factor <= 1:
-            return image
-
-        return image.subsample(
-            subsample_factor,
-            subsample_factor,
-        )
-
-    def _calculate_integer_subsample_factor(self, value, maximum_value):
-        """
-        Calculate a safe integer subsample factor.
-        """
-
-        if value <= maximum_value:
-            return 1
-
-        factor = value // maximum_value
-
-        if value % maximum_value != 0:
-            factor += 1
-
-        return max(
-            1,
-            factor,
-        )
-
-    # --------------------------------------------------------
-    # GUI helpers
-    # --------------------------------------------------------
-
-    def _set_status(self, status_text, color=None):
-        """
-        Update status label.
-        """
-
-        if color is None:
-            color = gui_config.STATUS_IDLE_COLOR
 
         self.status_label.config(
-            text=status_text,
+            text=message,
             fg=color,
         )
-
-
-# ============================================================
-# Direct test
-# ============================================================
-
-def test_review_page_direct():
-    """
-    Direct test for the Review page.
-    """
-
-    from page_manager import PageManager
-    from navigation_page import NavigationPage
-
-    root = tk.Tk()
-
-    root.title(
-        "Review Page Direct Test",
-    )
-
-    root.geometry(
-        f"{gui_config.WINDOW_WIDTH}x{gui_config.WINDOW_HEIGHT}"
-    )
-
-    if hasattr(gui_config, "WINDOW_RESIZABLE"):
-        root.resizable(
-            gui_config.WINDOW_RESIZABLE,
-            gui_config.WINDOW_RESIZABLE,
-        )
-
-    root.configure(
-        bg=gui_config.APP_BACKGROUND_COLOR,
-    )
-
-    container = tk.Frame(
-        root,
-        bg=gui_config.APP_BACKGROUND_COLOR,
-    )
-
-    container.pack(
-        fill="both",
-        expand=True,
-    )
-
-    page_manager = PageManager(
-        container=container,
-    )
-
-    navigation_page = NavigationPage(
-        parent=container,
-        page_manager=page_manager,
-    )
-
-    review_page = ReviewPage(
-        parent=container,
-        page_manager=page_manager,
-    )
-
-    page_manager.register_page(
-        gui_config.NAVIGATION_PAGE_NAME,
-        navigation_page,
-    )
-
-    page_manager.register_page(
-        gui_config.REVIEW_PAGE_NAME,
-        review_page,
-    )
-
-    page_manager.show_page(
-        gui_config.REVIEW_PAGE_NAME,
-    )
-
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    test_review_page_direct()

@@ -62,6 +62,27 @@ if str(CONTROLLER_DIR) not in sys.path:
 import analysis_controller_config
 
 
+# Add ANALYSIS_DIR so we can import log_json
+if str(ANALYSIS_DIR) not in sys.path:
+    sys.path.insert(
+        0,
+        str(ANALYSIS_DIR),
+    )
+
+
+try:
+    from log_json import (
+        load_session_log,
+        merge_analysis_into_session,
+        save_session_log,
+    )
+except ImportError:
+    # Fallback if log_json is not available
+    load_session_log = None
+    merge_analysis_into_session = None
+    save_session_log = None
+
+
 # ============================================================
 # Analysis controller
 # ============================================================
@@ -267,6 +288,12 @@ class AnalysisController:
 
             self.last_analysis_result = analysis_result
 
+            # Merge analysis results into the session JSON
+            self._merge_analysis_into_session_if_possible(
+                video_path=video_path,
+                analysis_result=analysis_result,
+            )
+
             self._send_message(
                 message_type="complete",
                 message_text=analysis_controller_config.STATUS_ANALYSIS_COMPLETE,
@@ -312,6 +339,56 @@ class AnalysisController:
             "run_analysis() does not accept a video path yet. "
             "Update analysis.py so run_analysis(video_path=None) is supported."
         )
+
+    def _merge_analysis_into_session_if_possible(self, video_path, analysis_result):
+        """
+        Load the session JSON created during training and merge analysis results into it.
+
+        This creates a unified JSON file that contains both training settings and
+        analysis results (table, homography, bounces, etc.) for each recording.
+        """
+
+        if load_session_log is None or merge_analysis_into_session is None or save_session_log is None:
+            self._send_message(
+                message_type="warning",
+                message_text="Session JSON merge skipped: log_json module not available.",
+            )
+            return
+
+        try:
+            # Try to load the existing session JSON
+            session_log = load_session_log(video_path)
+
+            # Merge analysis results into the session
+            updated_session_log = merge_analysis_into_session(
+                session_log=session_log,
+                analysis_result=analysis_result,
+            )
+
+            # Save the merged result back
+            session_json_path = save_session_log(
+                session_log=updated_session_log,
+                video_path=video_path,
+            )
+
+            self._send_message(
+                message_type="status",
+                message_text=f"Analysis results merged into session JSON: {session_json_path.name}",
+            )
+
+        except FileNotFoundError:
+            self._send_message(
+                message_type="warning",
+                message_text=f"Session JSON not found for video {video_path.name}. "
+                            "Analysis results were not merged. "
+                            "Ensure the video was recorded through the training session.",
+            )
+
+        except Exception as error:
+            self._send_message(
+                message_type="warning",
+                message_text=f"Failed to merge analysis results into session JSON: {error}",
+            )
 
     # --------------------------------------------------------
     # Analysis loading
