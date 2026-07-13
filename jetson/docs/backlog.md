@@ -7,20 +7,18 @@ item as a small checkpoint, with direct tests before GUI wiring when possible.
 
 ```mermaid
 flowchart TD
-    StaleDocs[Reconcile stale docs and comments] --> Listener[Add STM32 response listener]
-    Listener --> CompleteFlow[Live COMPLETE stops recording]
+    VerifySession[Verify Training to Analysis to Review end to end] --> StableIdentity[Use one video-derived session JSON identity]
+    StableIdentity --> ReliableMerge[Reliable analysis-to-JSON merge]
+    ReliableMerge --> AutoRefresh[Refresh Review after analysis completes]
+    ReliableMerge --> AnnotatedReview[Browse annotated videos in Review]
 
-    JsonExport[Standard JSON export from run_analysis] --> ReviewGrouping[Group Review outputs by session]
-    ReviewGrouping --> ReviewStats[Show JSON-backed Review stats]
-    ReviewGrouping --> AnnotatedReview[Browse annotated videos in Review]
-    ReviewGrouping --> AutoRefresh[Refresh Review after analysis completes]
+    Listener[Add STM32 response listener] --> CompleteFlow[Live COMPLETE stops recording]
 
     PreviewOverlay[Table-detection overlay during preview] --> TrainingUx[Stronger training setup feedback]
 
-    ReviewStats --> SessionCompare[Session comparison]
+    ReliableMerge --> SessionCompare[Session comparison]
     AnnotatedReview --> SessionCompare
-    JsonExport --> PlayerMetrics[Player-specific metrics]
-    ExternalViewer[Improve external viewer behavior] --> ReviewUx[More reliable Review workflow]
+    ReliableMerge --> PlayerMetrics[Player-specific metrics]
 ```
 
 Use this diagram as the rough order of work. Items near the top unblock items
@@ -28,14 +26,14 @@ below them.
 
 ## High Priority
 
-- [ ] Reconcile stale docs/comments about recording and preview placeholders with current real `MjpegRecorder` and `CameraPreviewService` code.
+- [x] Reconcile system and workflow documentation with the session JSON pipeline.
+- [ ] Run Training → Analysis → Review end to end on the Jetson.
+- [ ] Give every session one video-derived JSON filename so custom display names cannot break the Analysis merge.
 - [ ] Add STM32 response listener so live `COMPLETE` stops recording automatically without sending `STOP`.
-- [ ] Make JSON export a standard output of `run_analysis()`.
-- [ ] Group Review outputs by session: source recording, annotated video, heatmap, and JSON.
 
 ## Medium Priority
 
-- [ ] Show JSON-backed Review stats such as bounce count and placement summary.
+- [x] Show initial JSON-backed Review stats: bounce count, detection rate, and table status.
 - [ ] Add annotated video browsing/opening from Review.
 - [ ] Refresh Review automatically after analysis completes.
 - [ ] Add table-detection overlay during preview.

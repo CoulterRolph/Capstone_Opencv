@@ -8,10 +8,12 @@ It is responsible for:
 
 ```text
 - Accepting launcher settings from the user
+- Accepting an optional human-friendly session name
 - Showing a low-FPS camera preview for setup
 - Sending SETTINGS / START / STOP commands to the STM32 launcher
 - Starting and stopping high-FPS camera recording
 - Saving recordings for later offline analysis
+- Creating the initial session JSON beside the recording
 - Handling future STM32 completion messages
 ```
 
@@ -23,8 +25,8 @@ The Training page is not a computer-vision page. Its job is to collect user inpu
 
 | File | Responsibility |
 | --- | --- |
-| `gui/training_page.py` | Tkinter controls for speed, pace, shots, preview, start, stop, and test shot. |
-| `controller/training_controller.py` | Training state machine, settings validation, preview/recording/serial coordination. |
+| `gui/training_page.py` | Tkinter controls for session name, speed, pace, shots, preview, start, stop, and test shot. |
+| `controller/training_controller.py` | Training state machine, validation, preview/recording/serial coordination, and initial session JSON creation. |
 | `controller/training_controller_config.py` | State names, setting limits, serial toggles, recording toggles, STM32 response keywords. |
 | `capture/preview.py` | Low-FPS OpenCV camera preview service. |
 | `capture/preview_config.py` | Preview camera index, preview resolution, FPS, debug settings. |
@@ -48,7 +50,7 @@ flowchart TD
     Camera --> PreviewFrame[Latest RGB preview frame]
     PreviewFrame --> TrainingPage
 
-    TrainingPage --> Settings[Ball speed<br/>Pace seconds<br/>Number of shots]
+    TrainingPage --> Settings[Session name<br/>Ball speed<br/>Pace seconds<br/>Number of shots]
     Settings --> TrainingController
 
     TrainingController --> Validate[Validate settings]
@@ -61,8 +63,9 @@ flowchart TD
     SendSettings --> StartRecording[Start high-FPS recording]
     StartRecording --> Recorder[capture/recording.py]
     Recorder --> RecordingFile[capture/recordings/*.mkv]
+    RecordingFile --> InitialJSON[Create initial _session.json<br/>with empty analysis fields]
 
-    StartRecording --> SendStart[Send START command]
+    InitialJSON --> SendStart[Send START command]
     SendStart --> Serial
 
     SendStart --> Running[State: TRAINING]
@@ -75,8 +78,9 @@ flowchart TD
     StopChoice -->|STM32 COMPLETE| Complete[Handle COMPLETE]
     Complete --> StopRecording
 
-    StopRecording --> RecordingFile
-    RecordingFile --> Analysis[Available in Analysis page]
+    StopRecording --> FinalizedVideo[Finalized MKV]
+    FinalizedVideo --> Analysis[Available in Analysis page]
+    InitialJSON --> Analysis
 ```
 
 ---
@@ -208,6 +212,38 @@ Those recordings become the input videos for the Analysis page.
 
 ---
 
+## Initial Session JSON
+
+After recording starts and its output path is known, `TrainingController` writes
+an initial `_session.json` beside the MKV. This record connects what the user
+requested to the video that captured it.
+
+```mermaid
+flowchart LR
+    Inputs[Session name, speed, pace, shots] --> Controller[TrainingController]
+    Camera[Recording configuration] --> Controller
+    Controller --> MKV[Recorded MKV]
+    Controller --> JSON[Initial session JSON]
+    JSON --> EmptyResults[Empty table, homography, ball, bounce, and heatmap fields]
+    EmptyResults --> Later[Analysis fills these fields later]
+```
+
+The initial record contains:
+
+- Session identity and recording time
+- Video path
+- Training settings
+- Camera resolution and FPS
+- Empty result fields for Analysis to populate
+
+If the session-name input is blank, the controller creates a timestamped display
+name. The current code may also use a custom session name in the JSON filename.
+That can disagree with Analysis, which searches using the video stem. The common
+solution is to keep the filename tied to the video and store the display name
+inside the JSON.
+
+---
+
 ## State Machine
 
 ```mermaid
@@ -220,7 +256,7 @@ stateDiagram-v2
     IDLE --> STARTING: Start Training
     PREVIEWING --> STARTING: Start Training stops preview first
 
-    STARTING --> TRAINING: SETTINGS sent, recording started, START sent
+    STARTING --> TRAINING: SETTINGS sent, recording and JSON started, START sent
     STARTING --> ERROR: Validation, serial, or recording failure
 
     TRAINING --> STOPPING: User clicks Stop
@@ -273,6 +309,7 @@ Working or mostly connected:
 - Optional real STM32 serial sending
 - Manual stop flow
 - COMPLETE message handler
+- Initial session JSON creation
 ```
 
 Still improving:
@@ -283,6 +320,7 @@ Still improving:
 - Preview table-detection overlay
 - Stronger GUI summaries after a recording finishes
 - Automatic handoff from completed recording to analysis selection
+- End-to-end verification of session JSON naming and Analysis merge
 ```
 
 ---

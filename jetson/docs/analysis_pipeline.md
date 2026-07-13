@@ -15,7 +15,7 @@ It is responsible for:
 - Mapping bounce locations onto a top-down table view
 - Saving an annotated video
 - Saving a bounce heatmap
-- Preparing data for future JSON export
+- Merging analysis data into the Training-created session JSON
 ```
 
 Analysis is offline by design. Training records a video first; analysis processes that saved file afterward.
@@ -38,7 +38,7 @@ Analysis is offline by design. Training records a video first; analysis processe
 | `analysis/bounce.py` | Detects bounces from active-ball vertical motion. |
 | `analysis/annotate.py` | Draws table, ball, trail, bounce, and frame overlays into an output video. |
 | `analysis/heatmap.py` | Maps bounces to table space and generates heatmap outputs. |
-| `analysis/log_json.py` | JSON-safe logging utilities prepared for richer structured export. |
+| `analysis/log_json.py` | JSON-safe conversion plus session JSON load, merge, and save helpers. |
 
 ---
 
@@ -46,9 +46,10 @@ Analysis is offline by design. Training records a video first; analysis processe
 
 ```mermaid
 flowchart TD
-    User[User] --> AnalysisPage[gui/analysis_page.py]
-    AnalysisPage --> SelectVideo[Select recording from capture/recordings]
-    SelectVideo --> AnalysisController[controller/analysis_controller.py]
+    Recording[Recorded MKV] --> SelectVideo[User selects recording]
+    SessionBefore[Initial _session.json] --> AnalysisController
+    SelectVideo --> AnalysisPage[gui/analysis_page.py]
+    AnalysisPage --> AnalysisController[controller/analysis_controller.py]
 
     AnalysisController --> Worker[Background worker thread]
     Worker --> RunAnalysis[analysis/analysis.py<br/>run_analysis(video_path)]
@@ -67,15 +68,18 @@ flowchart TD
     BounceDetect --> MapBounces[Map bounce points through homography]
     MapBounces --> AnnotatedVideo[annotate.py<br/>Annotated MKV]
     MapBounces --> Heatmap[heatmap.py<br/>Heatmap PNG]
-    MapBounces -. prepared .-> Json[log_json.py<br/>Future JSON export]
+    MapBounces --> Result[Return analysis result]
 
     AnnotatedVideo --> ReviewAnnotated[review/annotated]
     Heatmap --> ReviewHeatmaps[review/heatmaps]
-    Json -. future .-> JsonResults[json_results]
+    Result --> AnalysisController
+    AnalysisController --> Json[log_json.py<br/>Session JSON merge]
+    Json --> SessionJson[capture/recordings<br/>_session.json]
 
-    ReviewAnnotated --> ReviewPage[Review Page]
-    ReviewHeatmaps --> ReviewPage
-    JsonResults -. future stats .-> ReviewPage
+    ReviewAnnotated --> ReviewController[Review Controller]
+    ReviewHeatmaps --> ReviewController
+    SessionJson --> ReviewController
+    ReviewController --> ReviewPage[Review Page]
 ```
 
 ---
@@ -223,9 +227,10 @@ review/heatmaps/
 
 The heatmap module can also maintain live heatmap state during annotation so the annotated video can show a mini table overlay.
 
-### 8. JSON Utilities
+### 8. Session JSON Integration
 
-`analysis/log_json.py` contains utilities to build JSON-safe analysis logs.
+`analysis/log_json.py` contains utilities to build JSON-safe data and merge the
+analysis result into the session record created during Training.
 
 It can represent:
 
@@ -239,7 +244,14 @@ It can represent:
 - Quality flags
 ```
 
-The utilities exist, but the main `run_analysis()` path currently returns a Python dictionary and does not fully save the rich JSON output as part of every analysis run.
+`run_analysis()` returns a Python dictionary. After it completes,
+`AnalysisController` loads the matching `_session.json`, merges the result, and
+saves it. A missing session file or merge error produces a warning so the
+analysis workflow can still complete.
+
+Important current limitation: Training can name the JSON from a custom session
+name, while Analysis derives the expected JSON path from the MKV stem. These
+must be made consistent for reliable end-to-end merging.
 
 ---
 
@@ -249,8 +261,9 @@ The GUI should stay responsive while analysis runs.
 
 ```mermaid
 flowchart LR
-    Tkinter[Tkinter main thread<br/>GUI widgets] --> Poll[Poll message queue]
-    Worker[Analysis worker thread<br/>YOLO/OpenCV pipeline] --> Queue[Queue status/result messages]
+    User[User starts analysis] --> Tkinter[Tkinter main thread<br/>GUI widgets]
+    Tkinter --> Worker[Analysis worker thread<br/>YOLO/OpenCV pipeline]
+    Worker --> Queue[Queue status, warning, error, or completion]
     Queue --> Poll
     Poll --> Tkinter
 ```
@@ -276,11 +289,13 @@ review/annotated/
 review/heatmaps/
     heatmap_[recording_name].png
 
-json_results/
-    Future or partially integrated structured analysis JSON
+capture/recordings/
+    [recording_name]_session.json
 ```
 
-The Review page currently focuses on heatmap preview. Annotated video review and JSON-backed statistics are future-facing.
+The Review page uses session JSON to show bounce count, ball-detection rate,
+table status, and the referenced heatmap. Annotated-video playback remains
+future-facing.
 
 ---
 
@@ -304,8 +319,8 @@ Working or mostly connected:
 Still improving:
 
 ```text
-- Full-video processing once frame limits are removed
-- Rich JSON export as a standard output of run_analysis()
+- End-to-end verification of the session JSON merge
+- Consistent JSON identity and filename generation
 - Accepted/rejected bounce reporting
 - Quantitative accuracy validation
 - Player-specific metrics

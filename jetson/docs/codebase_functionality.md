@@ -21,13 +21,23 @@ For the higher-level system design, see `software_architecture.md`.
 ```mermaid
 flowchart LR
     Main[main.py] --> GUI[gui/]
-    GUI --> Controllers[controller/]
-    Controllers --> Capture[capture/]
-    Controllers --> Comm[comm/]
-    Controllers --> Analysis[analysis/]
+    GUI --> TC[controller/training_controller.py]
+    GUI --> AC[controller/analysis_controller.py]
+    GUI --> RC[controller/review_controller.py]
+
+    TC --> Capture[capture/]
+    TC --> Comm[comm/]
+    TC --> Sessions[capture/recordings/<br/>MKV and session JSON]
+
+    Sessions --> AC
+    AC --> Analysis[analysis/]
     Analysis --> Models[models/]
-    Analysis --> Review[review/]
-    Analysis -. future .-> Json[json_results/]
+    Analysis --> Artifacts[review/<br/>annotated video and heatmap]
+    AC --> Sessions
+
+    Sessions --> RC
+    Artifacts --> RC
+    RC --> GUI
 ```
 
 ---
@@ -50,9 +60,11 @@ The GUI layer is Tkinter-based. It should display controls and route user action
 | `gui_config.py` | Window size, page names, colors, fonts, polling intervals, and display settings. |
 | `page_manager.py` | Registers pages and raises the selected page. |
 | `navigation_page.py` | Start screen for choosing Training, Analysis, or Review. |
-| `training_page.py` | Training controls, preview display, controller polling, and user-facing training status. |
+| `scrollable_frame.py` | Reusable touchscreen-friendly scrolling container used by long pages. |
+| `training_page.py` | Session name, training controls, preview display, controller polling, and user-facing status. |
 | `analysis_page.py` | Recording selection, analysis start button, status/log display, and controller polling. |
-| `review_page.py` | Heatmap selection and preview UI. |
+| `review_page.py` | Session selection, JSON-backed metric display, and heatmap preview. |
+| `review_page_old.py` | Preserved Review implementation from before session JSON integration. |
 | `gui_backup.py`, `GUI_Coulter.py` | Older or backup GUI code. Treat as reference unless intentionally reviving it. |
 
 Rule:
@@ -69,12 +81,12 @@ Controllers connect GUI actions to functional modules.
 
 | File | What it does |
 | --- | --- |
-| `training_controller.py` | Validates training settings, manages training state, starts/stops preview, starts/stops recording, sends STM32 commands, and handles future STM32 responses. |
+| `training_controller.py` | Validates settings, manages training state, coordinates preview/recording/serial, and creates initial session JSON. |
 | `training_controller_config.py` | Training limits, state names, serial/recording toggles, STM32 response keywords, and status messages. |
-| `analysis_controller.py` | Lists recordings, dynamically loads `analysis/analysis.py`, starts analysis in a background thread, and queues status/result messages. |
+| `analysis_controller.py` | Lists recordings, runs analysis in a background thread, queues status messages, and merges results into session JSON. |
 | `analysis_controller_config.py` | Recording folder, valid video extensions, thread toggle, and analysis status messages. |
-| `review_controller.py` | Lists heatmap files and contains optional system-viewer support for review artifacts. |
-| `review_controller_config.py` | Review output folders and valid image extensions. |
+| `review_controller.py` | Lists and loads `_session.json` files, extracts metrics, and resolves heatmap paths. |
+| `review_controller_config.py` | Legacy/general Review output configuration; session discovery uses the recordings directory. |
 
 Rule:
 
@@ -124,7 +136,7 @@ Analysis code owns computer vision and output generation.
 | `bounce.py` | Detects bounce events from active-ball vertical motion and cooldown logic. |
 | `annotate.py` | Draws analysis overlays and writes annotated videos. |
 | `heatmap.py` | Maps bounce events into table coordinates and draws heatmap images/overlays. |
-| `log_json.py` | Builds JSON-safe analysis logs for future structured export. |
+| `log_json.py` | Builds JSON-safe logs and loads, merges, and saves Training + Analysis session JSON. |
 | `archived/` | Older analysis implementations kept for reference. |
 
 Current primary metrics:
@@ -142,9 +154,9 @@ Current primary metrics:
 Prepared but not fully surfaced:
 
 ```text
-- Rich JSON metrics export
 - Player-specific metrics
 - Accepted/rejected bounce diagnostics
+- Annotated-video playback in Review
 ```
 
 ---
@@ -208,19 +220,22 @@ analysis/analysis_config.py
 
 | Folder | What it stores |
 | --- | --- |
-| `capture/recordings/` | Raw recorded MKV training sessions. |
+| `capture/recordings/` | Raw MKV recordings and their `_session.json` records. |
 | `review/annotated/` | Annotated MKV videos created by analysis. |
 | `review/heatmaps/` | Heatmap PNG images created by analysis. |
-| `json_results/` | Future or partially integrated structured JSON results. |
+| `json_results/` | Older/parallel analysis-log output; it is not the current Review source. |
 
 Intended output relationship:
 
 ```text
 capture/recordings/session.mkv
+capture/recordings/session_session.json
 review/annotated/annotate_session.mkv
 review/heatmaps/heatmap_session.png
-json_results/session_analysis.json
 ```
+
+The session JSON is created by Training, enriched by Analysis, and read by
+Review. This is the active information path.
 
 ---
 
@@ -263,7 +278,8 @@ comm/
 | Change ball tracking behavior | `analysis/ball.py` |
 | Change bounce detection thresholds | `analysis/analysis_config.py`, `analysis/bounce.py` |
 | Change heatmap appearance | `analysis/heatmap.py`, `analysis/analysis_config.py` |
-| Change review artifact loading | `controller/review_controller.py`, `gui/review_page.py` |
+| Change session JSON structure or merge | `controller/training_controller.py`, `analysis/log_json.py`, `controller/analysis_controller.py` |
+| Change Review session loading | `controller/review_controller.py`, `gui/review_page.py` |
 
 ---
 
