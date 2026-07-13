@@ -162,7 +162,7 @@ BALL_TEST_FRAME_STEP = 1
 
 # For testing, do not process the full video yet.
 # Set this to None later to process the entire video.
-BALL_ANALYSIS_MAX_FRAMES = 600
+BALL_ANALYSIS_MAX_FRAMES = None
 
 # Print progress every N frames during integrated analysis.
 BALL_ANALYSIS_PROGRESS_INTERVAL = 120

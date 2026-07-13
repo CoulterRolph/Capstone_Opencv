@@ -180,7 +180,8 @@ class TrainingController:
         self.state = training_controller_config.STATE_IDLE
 
         self.current_settings = None
-        self.current_session_name = None
+        self.user_session_name = None  # Original user input (may be empty)
+        self.current_session_name = None  # Normalized session name (with defaults)
         self.last_recording_path = None
         self.last_stm32_response = None
 
@@ -553,6 +554,8 @@ class TrainingController:
             return False
 
         self.current_settings = settings
+        self.user_session_name = session_name  # Save original user input
+        self.current_session_name = self._normalize_session_name(session_name)
 
         if self.is_preview_running():
             self.stop_preview()
@@ -1103,6 +1106,27 @@ class TrainingController:
 
         return True
 
+    def _sanitize_session_name_for_filename(self, session_name):
+        """
+        Sanitize a session name to be safe as a filename.
+
+        Removes/replaces invalid filename characters while preserving readability.
+        """
+
+        import re
+
+        # Remove/replace invalid filename characters
+        # Keep alphanumeric, spaces, hyphens, underscores, dots
+        sanitized = re.sub(r'[<>:"/\\|?*]', '_', str(session_name))
+
+        # Replace multiple spaces with single underscores
+        sanitized = re.sub(r'\s+', '_', sanitized)
+
+        # Remove leading/trailing underscores and spaces
+        sanitized = sanitized.strip('_ ')
+
+        return sanitized
+
     def _normalize_session_name(self, session_name):
         """
         Normalize a user-provided session name and apply a default if blank.
@@ -1119,13 +1143,26 @@ class TrainingController:
 
         return session_name
 
-    def _build_session_metadata_path(self, recording_path):
+    def _build_session_metadata_path(self, recording_path, user_session_name=None):
         """
         Build a metadata JSON path next to the recorded MKV.
+
+        Uses user_session_name if provided and non-empty.
+        Otherwise defaults to the recording video's stem (original naming convention).
         """
 
         recording_path = Path(recording_path)
-        return recording_path.with_name(f"{recording_path.stem}_session.json")
+
+        # Decide whether to use user-provided session name or recording stem
+        if user_session_name and str(user_session_name).strip():
+            # Use sanitized user-provided session name
+            base_name = self._sanitize_session_name_for_filename(user_session_name)
+        else:
+            # Fall back to recording video filename (original naming convention)
+            base_name = recording_path.stem
+
+        filename = f"{base_name}_session.json"
+        return recording_path.parent / filename
 
     def _build_session_metadata(self):
         """
@@ -1191,7 +1228,10 @@ class TrainingController:
 
         try:
             metadata = self._build_session_metadata()
-            metadata_path = self._build_session_metadata_path(self.last_recording_path)
+            metadata_path = self._build_session_metadata_path(
+                self.last_recording_path,
+                self.user_session_name,
+            )
             metadata_path.parent.mkdir(parents=True, exist_ok=True)
 
             with open(metadata_path, "w", encoding="utf-8") as metadata_file:
