@@ -177,13 +177,14 @@ except ModuleNotFoundError:
 # ============================================================
 
 ball_model = None
+ball_model_path = None
 
 
 # ============================================================
 # Model loading
 # ============================================================
 
-def load_ball_model(model_path=BALL_MODEL_PATH):
+def load_ball_model(model_path=None):
     """
     Load the ball detection model.
 
@@ -191,12 +192,27 @@ def load_ball_model(model_path=BALL_MODEL_PATH):
     """
 
     global ball_model
+    global ball_model_path
 
-    if ball_model is not None:
-        print("Ball model already loaded.", flush=True)
+    if model_path is None:
+        if ball_model is not None:
+            print(f"Ball model already loaded: {ball_model_path}", flush=True)
+            return ball_model
+
+        model_path = BALL_MODEL_PATH
+
+    model_path = Path(model_path).resolve()
+
+    if ball_model is not None and ball_model_path == model_path:
+        print(f"Ball model already loaded: {model_path}", flush=True)
         return ball_model
 
-    model_path = Path(model_path)
+    if ball_model is not None and ball_model_path != model_path:
+        print(
+            f"Switching ball model from {ball_model_path} to {model_path}",
+            flush=True,
+        )
+        cleanup_ball_model()
 
     if not model_path.exists():
         raise FileNotFoundError(f"Ball model file does not exist: {model_path}")
@@ -204,11 +220,33 @@ def load_ball_model(model_path=BALL_MODEL_PATH):
     print(f"Loading ball model: {model_path}", flush=True)
 
     ball_model = YOLO(str(model_path))
+    ball_model_path = model_path
 
     print("Ball model loaded successfully.", flush=True)
     print(f"Ball model class names: {ball_model.names}", flush=True)
 
     return ball_model
+
+
+def cleanup_ball_model():
+    """Release the cached ball model so another version can be loaded."""
+
+    global ball_model
+    global ball_model_path
+
+    ball_model = None
+    ball_model_path = None
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except Exception:
+        pass
+
+    print("Ball model cleanup complete.", flush=True)
 
 
 # ============================================================

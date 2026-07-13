@@ -80,13 +80,14 @@ from classes.objects import table
 # ============================================================
 
 table_model = None
+table_model_path = None
 
 
 # ============================================================
 # Model loading
 # ============================================================
 
-def load_table_model(model_path=TABLE_MODEL_PATH):
+def load_table_model(model_path=None):
     """
     Load the table keypoint model.
 
@@ -102,12 +103,30 @@ def load_table_model(model_path=TABLE_MODEL_PATH):
     """
 
     global table_model
+    global table_model_path
 
-    if table_model is not None:
-        print("Table model already loaded.", flush=True)
+    if model_path is None:
+        if table_model is not None:
+            print(
+                f"Table model already loaded: {table_model_path}",
+                flush=True,
+            )
+            return table_model
+
+        model_path = TABLE_MODEL_PATH
+
+    model_path = Path(model_path).resolve()
+
+    if table_model is not None and table_model_path == model_path:
+        print(f"Table model already loaded: {model_path}", flush=True)
         return table_model
 
-    model_path = Path(model_path)
+    if table_model is not None and table_model_path != model_path:
+        print(
+            f"Switching table model from {table_model_path} to {model_path}",
+            flush=True,
+        )
+        cleanup_table_model()
 
     if not model_path.exists():
         raise FileNotFoundError(f"Table model file does not exist: {model_path}")
@@ -115,6 +134,7 @@ def load_table_model(model_path=TABLE_MODEL_PATH):
     print(f"Loading table model: {model_path}", flush=True)
 
     table_model = YOLO(str(model_path))
+    table_model_path = model_path
 
     print("Table model loaded successfully.", flush=True)
 
@@ -517,10 +537,13 @@ def cleanup_table_model():
     """
 
     global table_model
+    global table_model_path
 
     if table_model is not None:
         print("Cleaning up table model...", flush=True)
         table_model = None
+
+    table_model_path = None
 
     try:
         gc.collect()

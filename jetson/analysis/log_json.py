@@ -430,6 +430,18 @@ def merge_analysis_into_session(
     if analysis_result is None:
         return session_log
 
+    # Record exactly which models produced these analysis results.
+    if "analysis_models" in analysis_result:
+        session_log["analysis_models"] = make_json_safe(
+            analysis_result["analysis_models"]
+        )
+
+    # Record generated output paths, including the versioned annotated video.
+    if "artifacts" in analysis_result:
+        session_log["artifacts"] = make_json_safe(
+            analysis_result["artifacts"]
+        )
+
     # Merge video information
     if "video_info" in analysis_result:
         session_log["video"] = make_json_safe(analysis_result["video_info"])

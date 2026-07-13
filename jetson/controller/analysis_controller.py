@@ -82,6 +82,13 @@ except ImportError:
     merge_analysis_into_session = None
     save_session_log = None
 
+from model_selection import (
+    ModelSelection,
+    list_available_model_versions,
+)
+
+import analysis_config
+
 
 # ============================================================
 # Analysis controller
@@ -104,6 +111,7 @@ class AnalysisController:
         self.analysis_is_running = False
         self.last_analysis_result = None
         self.selected_video_path = None
+        self.selected_model_selection = None
 
     # --------------------------------------------------------
     # Public API for the GUI
@@ -147,7 +155,24 @@ class AnalysisController:
 
         return recording_paths
 
-    def start_analysis(self, video_path=None):
+    def list_available_model_versions(self):
+        """Return complete model-version folders in numeric order."""
+
+        return list_available_model_versions(
+            analysis_config.MODELS_DIR,
+        )
+
+    def get_default_model_version(self):
+        """Return the configured default used by the Analysis page."""
+
+        return analysis_config.DEFAULT_MODEL_VERSION
+
+    def start_analysis(
+        self,
+        video_path=None,
+        table_model_version=None,
+        ball_model_version=None,
+    ):
         """
         Start the analysis pipeline.
 
@@ -186,15 +211,49 @@ class AnalysisController:
 
             return False
 
+        if table_model_version is None:
+            table_model_version = analysis_config.TABLE_MODEL_VERSION
+
+        if ball_model_version is None:
+            ball_model_version = table_model_version
+
+        try:
+            model_selection = ModelSelection(
+                table_version=table_model_version,
+                ball_version=ball_model_version,
+            )
+
+            available_versions = self.list_available_model_versions()
+
+            if model_selection.table_version not in available_versions:
+                raise ValueError(
+                    f"Table model version is unavailable: {model_selection.table_version}"
+                )
+
+            if model_selection.ball_version not in available_versions:
+                raise ValueError(
+                    f"Ball model version is unavailable: {model_selection.ball_version}"
+                )
+
+        except (TypeError, ValueError) as error:
+            self._send_message(
+                message_type="error",
+                message_text=f"Invalid model selection: {error}",
+            )
+            return False
+
         self.selected_video_path = video_path
+        self.selected_model_selection = model_selection
 
         if analysis_controller_config.RUN_ANALYSIS_IN_BACKGROUND_THREAD:
             return self._start_analysis_in_background_thread(
                 video_path,
+                model_selection,
             )
 
         return self._start_analysis_in_current_thread(
             video_path,
+            model_selection,
         )
 
     def is_analysis_running(self):
@@ -222,7 +281,7 @@ class AnalysisController:
     # Thread management
     # --------------------------------------------------------
 
-    def _start_analysis_in_background_thread(self, video_path):
+    def _start_analysis_in_background_thread(self, video_path, model_selection):
         """
         Start analysis in a worker thread.
 
@@ -234,7 +293,7 @@ class AnalysisController:
 
         self.analysis_thread = threading.Thread(
             target=self._analysis_worker,
-            args=(video_path,),
+            args=(video_path, model_selection),
             daemon=True,
         )
 
@@ -242,7 +301,7 @@ class AnalysisController:
 
         return True
 
-    def _start_analysis_in_current_thread(self, video_path):
+    def _start_analysis_in_current_thread(self, video_path, model_selection):
         """
         Start analysis in the current thread.
 
@@ -255,6 +314,7 @@ class AnalysisController:
 
         self._analysis_worker(
             video_path,
+            model_selection,
         )
 
         return True
@@ -263,7 +323,7 @@ class AnalysisController:
     # Worker
     # --------------------------------------------------------
 
-    def _analysis_worker(self, video_path):
+    def _analysis_worker(self, video_path, model_selection):
         """
         Run the analysis pipeline.
         """
@@ -278,12 +338,18 @@ class AnalysisController:
 
             self._send_message(
                 message_type="status",
-                message_text=f"{analysis_controller_config.STATUS_ANALYSIS_STARTED} Video: {video_path.name}",
+                message_text=(
+                    f"{analysis_controller_config.STATUS_ANALYSIS_STARTED} "
+                    f"Video: {video_path.name}; "
+                    f"table={model_selection.table_version}; "
+                    f"ball={model_selection.ball_version}"
+                ),
             )
 
             analysis_result = self._call_run_analysis(
                 run_analysis=run_analysis,
                 video_path=video_path,
+                model_selection=model_selection,
             )
 
             self.last_analysis_result = analysis_result
@@ -312,7 +378,7 @@ class AnalysisController:
         finally:
             self.analysis_is_running = False
 
-    def _call_run_analysis(self, run_analysis, video_path):
+    def _call_run_analysis(self, run_analysis, video_path, model_selection):
         """
         Call run_analysis() with the selected video path.
 
@@ -325,9 +391,17 @@ class AnalysisController:
         )
 
         if "video_path" in function_signature.parameters:
-            return run_analysis(
-                video_path=video_path,
-            )
+            call_arguments = {
+                "video_path": video_path,
+            }
+
+            if "table_model_version" in function_signature.parameters:
+                call_arguments["table_model_version"] = model_selection.table_version
+
+            if "ball_model_version" in function_signature.parameters:
+                call_arguments["ball_model_version"] = model_selection.ball_version
+
+            return run_analysis(**call_arguments)
 
         # Fallback for a positional parameter.
         if len(function_signature.parameters) >= 1:
@@ -587,4 +661,3 @@ if __name__ == "__main__":
 
     else:
         test_analysis_controller_import_only()
-        

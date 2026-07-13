@@ -175,6 +175,7 @@ from video_checker import (
 )
 
 from table import (
+    load_table_model,
     detect_table_from_video,
     print_table_object_keypoints,
 )
@@ -213,6 +214,11 @@ from annotate import (
     update_ball_trail,
 )
 
+from model_selection import (
+    ModelSelection,
+    resolve_model_selection,
+)
+
 
 # ============================================================
 # Optional heatmap imports
@@ -243,7 +249,7 @@ except ImportError:
 # Annotation helpers
 # ============================================================
 
-def setup_annotation_writer(video_path, video_info):
+def setup_annotation_writer(video_path, video_info, model_version_tag=None):
     """
     Create the annotation video writer if annotation is enabled.
 
@@ -271,6 +277,7 @@ def setup_annotation_writer(video_path, video_info):
         output_dir=ANNOTATED_VIDEO_DIR,
         prefix=ANNOTATED_VIDEO_PREFIX,
         extension=ANNOTATED_VIDEO_EXTENSION,
+        version_tag=model_version_tag,
     )
 
     try:
@@ -954,7 +961,11 @@ def compute_integrated_stable_homography(video_capture):
 # Main analysis function
 # ============================================================
 
-def run_analysis(video_path=None):
+def run_analysis(
+    video_path=None,
+    table_model_version=None,
+    ball_model_version=None,
+):
     """
     Run the current analysis pipeline.
 
@@ -970,6 +981,12 @@ def run_analysis(video_path=None):
             Optional path to a selected video.
             If None, the default video from analysis_config.py is used.
 
+        table_model_version:
+            Optional table-model folder version, such as ``v2``.
+
+        ball_model_version:
+            Optional ball-model folder version. Defaults to the table version.
+
     Returns:
         analysis_result:
             Dictionary containing video info, table info, homography info,
@@ -981,11 +998,31 @@ def run_analysis(video_path=None):
         default_video_path=DEFAULT_RECORDING_PATH,
     )
 
+    if table_model_version is None:
+        table_model_version = analysis_config.TABLE_MODEL_VERSION
+
+    if ball_model_version is None:
+        ball_model_version = table_model_version
+
+    model_selection = ModelSelection(
+        table_version=table_model_version,
+        ball_version=ball_model_version,
+    )
+
+    model_paths = resolve_model_selection(
+        models_dir=analysis_config.MODELS_DIR,
+        selection=model_selection,
+    )
+
     print()
     print("===========================================", flush=True)
     print(" Starting Analysis", flush=True)
     print("===========================================", flush=True)
     print(f"Selected video: {selected_video_path}", flush=True)
+    print(f"Table model version: {model_selection.table_version}", flush=True)
+    print(f"Table model path: {model_paths['table']}", flush=True)
+    print(f"Ball model version: {model_selection.ball_version}", flush=True)
+    print(f"Ball model path: {model_paths['ball']}", flush=True)
 
     video_capture = None
 
@@ -1004,6 +1041,10 @@ def run_analysis(video_path=None):
         print("===========================================")
         print(" Detecting Stable Table Homography")
         print("===========================================")
+
+        load_table_model(
+            model_path=model_paths["table"],
+        )
 
         detected_table, homography_result = compute_integrated_stable_homography(
             video_capture,
@@ -1031,13 +1072,19 @@ def run_analysis(video_path=None):
         print(" Running Ball Detection / Tracking", flush=True)
         print("===========================================", flush=True)
 
-        ball_tracking_result, bounce_tracking_result = process_ball_and_bounce_tracking_for_video(
+        (
+            ball_tracking_result,
+            bounce_tracking_result,
+            annotated_video_path,
+        ) = process_ball_and_bounce_tracking_for_video(
             video_capture=video_capture,
             video_info=video_info,
             video_path=selected_video_path,
             detected_table=detected_table,
             homography_result=homography_result,
             max_frames=BALL_ANALYSIS_MAX_FRAMES,
+            ball_model_path=model_paths["ball"],
+            model_version_tag=model_selection.output_tag,
         )
 
         # ------------------------------------------------------------
@@ -1052,6 +1099,18 @@ def run_analysis(video_path=None):
             "ball_tracking": ball_tracking_result,
             "bounce_tracking": bounce_tracking_result,
             "heatmap": bounce_tracking_result.get("heatmap"),
+            "analysis_models": {
+                **model_selection.to_dict(),
+                "table_model_path": str(model_paths["table"]),
+                "ball_model_path": str(model_paths["ball"]),
+            },
+            "artifacts": {
+                "annotated_video_path": (
+                    str(annotated_video_path)
+                    if annotated_video_path is not None
+                    else None
+                ),
+            },
         }
 
         print()
@@ -1096,6 +1155,8 @@ def process_ball_and_bounce_tracking_for_video(
     detected_table,
     homography_result,
     max_frames=None,
+    ball_model_path=None,
+    model_version_tag=None,
 ):
     """
     Process video frames, track the active ball, detect bounces,
@@ -1140,7 +1201,9 @@ def process_ball_and_bounce_tracking_for_video(
             and optional heatmap result.
     """
 
-    ball_model = load_ball_model()
+    ball_model = load_ball_model(
+        model_path=ball_model_path,
+    )
 
     tracker_state = create_ball_tracker_state()
     bounce_state = create_bounce_state()
@@ -1161,6 +1224,7 @@ def process_ball_and_bounce_tracking_for_video(
     annotated_video_writer, annotated_video_path = setup_annotation_writer(
         video_path=video_path,
         video_info=video_info,
+        model_version_tag=model_version_tag,
     )
 
     try:
@@ -1295,7 +1359,11 @@ def process_ball_and_bounce_tracking_for_video(
         "heatmap": heatmap_result,
     }
 
-    return ball_tracking_result, bounce_tracking_result
+    return (
+        ball_tracking_result,
+        bounce_tracking_result,
+        annotated_video_path,
+    )
 
 
 def process_latest_active_position_for_bounce(

@@ -41,6 +41,7 @@ def build_annotated_video_path(
     output_dir,
     prefix="annotate_",
     extension=".mkv",
+    version_tag=None,
 ):
     """
     Build the annotated video output path.
@@ -50,7 +51,7 @@ def build_annotated_video_path(
             sample_001.mkv
 
         output:
-            review/annotated/annotate_sample_001.mkv
+            review/annotated/annotate_sample_001_v2.mkv
     """
 
     original_video_path = Path(original_video_path)
@@ -58,7 +59,14 @@ def build_annotated_video_path(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_name = f"{prefix}{original_video_path.stem}{extension}"
+    tag_suffix = ""
+
+    if version_tag is not None and str(version_tag).strip():
+        tag_suffix = f"_{str(version_tag).strip()}"
+
+    output_name = (
+        f"{prefix}{original_video_path.stem}{tag_suffix}{extension}"
+    )
     output_path = output_dir / output_name
 
     return output_path

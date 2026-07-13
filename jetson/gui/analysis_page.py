@@ -90,9 +90,11 @@ class AnalysisPage(tk.Frame):
 
         self.recording_paths_by_name = {}
         self.selected_recording_name = tk.StringVar()
+        self.selected_model_version = tk.StringVar()
 
         self.status_label = None
         self.recording_dropdown = None
+        self.model_version_dropdown = None
         self.refresh_recordings_button = None
         self.start_analysis_button = None
         self.back_button = None
@@ -101,6 +103,7 @@ class AnalysisPage(tk.Frame):
         self._configure_ttk_style()
         self._build_page()
         self._load_recording_dropdown()
+        self._load_model_version_dropdown()
         self._start_message_polling()
 
     # --------------------------------------------------------
@@ -251,7 +254,7 @@ class AnalysisPage(tk.Frame):
 
     def _build_video_selection_section(self, parent):
         """
-        Add video selection dropdown.
+        Add compact model-version and recording selectors on one row.
         """
 
         selection_panel = tk.Frame(
@@ -265,32 +268,98 @@ class AnalysisPage(tk.Frame):
             pady=(10, 12),
         )
 
-        selection_label = tk.Label(
+        selection_panel.columnconfigure(
+            0,
+            weight=0,
+        )
+
+        selection_panel.columnconfigure(
+            1,
+            weight=1,
+        )
+
+        model_frame = tk.Frame(
             selection_panel,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
+
+        model_frame.grid(
+            row=0,
+            column=0,
+            sticky="nw",
+            padx=(16, 8),
+            pady=14,
+        )
+
+        model_label = tk.Label(
+            model_frame,
+            text="Model Version:",
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
+        )
+
+        model_label.pack(
+            anchor="w",
+            pady=(0, 6),
+        )
+
+        self.model_version_dropdown = ttk.Combobox(
+            model_frame,
+            textvariable=self.selected_model_version,
+            width=12,
+            state="readonly",
+            style="TCubed.TCombobox",
+        )
+
+        self.model_version_dropdown.pack(
+            anchor="w",
+        )
+
+        recording_frame = tk.Frame(
+            selection_panel,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
+
+        recording_frame.grid(
+            row=0,
+            column=1,
+            sticky="nsew",
+            padx=(8, 16),
+            pady=14,
+        )
+
+        recording_frame.columnconfigure(
+            0,
+            weight=1,
+        )
+
+        recording_label = tk.Label(
+            recording_frame,
             text=gui_config.ANALYSIS_VIDEO_SELECTION_LABEL_TEXT,
             font=gui_config.LABEL_FONT,
             bg=gui_config.PANEL_BACKGROUND_COLOR,
             fg=gui_config.TEXT_ON_DARK_PRIMARY,
         )
 
-        selection_label.pack(
-            anchor="w",
-            padx=16,
-            pady=(14, 6),
+        recording_label.grid(
+            row=0,
+            column=0,
+            sticky="w",
+            pady=(0, 6),
         )
 
         self.recording_dropdown = ttk.Combobox(
-            selection_panel,
+            recording_frame,
             textvariable=self.selected_recording_name,
-            width=gui_config.WIDE_DROPDOWN_WIDTH,
             state="readonly",
             style="TCubed.TCombobox",
         )
 
-        self.recording_dropdown.pack(
-            fill="x",
-            padx=16,
-            pady=(0, 14),
+        self.recording_dropdown.grid(
+            row=1,
+            column=0,
+            sticky="ew",
         )
 
     def _build_log_section(self, parent):
@@ -522,6 +591,32 @@ class AnalysisPage(tk.Frame):
             selected_name,
         )
 
+    def _load_model_version_dropdown(self):
+        """Load complete version folders and select the configured default."""
+
+        model_versions = self.analysis_controller.list_available_model_versions()
+        self.model_version_dropdown["values"] = model_versions
+
+        if not model_versions:
+            self.selected_model_version.set("")
+            self._append_log_message(
+                "No complete model-version folders were found in models/."
+            )
+            return
+
+        default_version = self.analysis_controller.get_default_model_version()
+
+        if default_version not in model_versions:
+            default_version = model_versions[-1]
+
+        self.selected_model_version.set(default_version)
+        self._append_log_message(
+            f"Available model versions: {', '.join(model_versions)}"
+        )
+        self._append_log_message(
+            f"Selected model version: {default_version}"
+        )
+
     # --------------------------------------------------------
     # Button callbacks
     # --------------------------------------------------------
@@ -555,6 +650,7 @@ class AnalysisPage(tk.Frame):
         )
 
         self._load_recording_dropdown()
+        self._load_model_version_dropdown()
 
     def _on_start_analysis_clicked(self):
         """
@@ -569,6 +665,7 @@ class AnalysisPage(tk.Frame):
             return
 
         selected_recording_path = self._get_selected_recording_path()
+        selected_model_version = self.selected_model_version.get().strip()
 
         if selected_recording_path is None:
             messagebox.showwarning(
@@ -582,8 +679,20 @@ class AnalysisPage(tk.Frame):
 
             return
 
+        if not selected_model_version:
+            messagebox.showwarning(
+                "No Model Version Selected",
+                "Select a model version before starting analysis.",
+            )
+            self._append_log_message(
+                "Start Analysis blocked because no model version is selected."
+            )
+            return
+
         analysis_started = self.analysis_controller.start_analysis(
             video_path=selected_recording_path,
+            table_model_version=selected_model_version,
+            ball_model_version=selected_model_version,
         )
 
         if not analysis_started:
@@ -603,7 +712,8 @@ class AnalysisPage(tk.Frame):
         )
 
         self._append_log_message(
-            f"Start Analysis button clicked for: {selected_recording_path.name}"
+            f"Start Analysis clicked: {selected_recording_path.name}; "
+            f"models={selected_model_version}"
         )
 
     # --------------------------------------------------------
@@ -790,6 +900,10 @@ class AnalysisPage(tk.Frame):
         )
 
         self.recording_dropdown.config(
+            state=dropdown_state,
+        )
+
+        self.model_version_dropdown.config(
             state=dropdown_state,
         )
 

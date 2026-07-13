@@ -182,11 +182,15 @@ review/
     Saved heatmaps and annotated videos
 
 models/
-    YOLO model files
+    Versioned YOLO table and ball/player model sets
 
 docs/
     Project documentation and Mermaid flowcharts
 ```
+
+The Analysis page discovers complete `v1`, `v2`, and future version folders.
+The selected version is applied to both models and appended to annotated output
+names, such as `annotate_sample_001_v2.mkv`.
 
 ---
 
@@ -200,9 +204,14 @@ project/jetson/
 │
 ├── docs/
 │   ├── software_architecture.md
+│   ├── project_process_map.md
 │   ├── training_workflow.md
 │   ├── analysis_pipeline.md
-│   └── review_workflow.md
+│   ├── review_workflow.md
+│   ├── bounce_detection_improvement_plan.md
+│   ├── configuration_reference.md
+│   ├── session_json_schema.md
+│   └── documentation_roadmap.md
 │
 ├── gui/
 │   ├── gui.py
@@ -241,8 +250,12 @@ project/jetson/
 │   └── recordings/
 │
 ├── models/
-│   ├── table_keypoints.pt
-│   └── ball_player_detect.pt
+│   ├── v1/
+│   │   ├── table_pose_01.pt
+│   │   └── ball_player_detect_01.pt
+│   └── v2/
+│       ├── table_pose_02.pt
+│       └── ball_player_detect_02.pt
 │
 ├── review/
 │   ├── heatmaps/
@@ -511,12 +524,20 @@ Current documentation files:
 
 ```text
 docs/software_architecture.md
+docs/project_process_map.md
 docs/training_workflow.md
 docs/analysis_pipeline.md
 docs/review_workflow.md
+docs/bounce_detection_improvement_plan.md
+docs/configuration_reference.md
+docs/session_json_schema.md
+docs/documentation_roadmap.md
 ```
 
-These files use Mermaid diagrams to show the system architecture and workflow flowcharts.
+Start with `docs/project_process_map.md` to follow the application from the
+Selection screen down to table detection, active-ball tracking, bounce
+detection, and saved outputs. The documentation uses Mermaid diagrams for
+architecture, workflow, state, and information-flow views.
 
 To preview Mermaid diagrams:
 

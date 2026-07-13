@@ -62,7 +62,7 @@ The GUI layer is Tkinter-based. It should display controls and route user action
 | `navigation_page.py` | Start screen for choosing Training, Analysis, or Review. |
 | `scrollable_frame.py` | Reusable touchscreen-friendly scrolling container used by long pages. |
 | `training_page.py` | Session name, training controls, preview display, controller polling, and user-facing status. |
-| `analysis_page.py` | Recording selection, analysis start button, status/log display, and controller polling. |
+| `analysis_page.py` | Recording and model-version selection, analysis start, status/log display, and controller polling. |
 | `review_page.py` | Session selection, JSON-backed metric display, and heatmap preview. |
 | `review_page_old.py` | Preserved Review implementation from before session JSON integration. |
 | `gui_backup.py`, `GUI_Coulter.py` | Older or backup GUI code. Treat as reference unless intentionally reviving it. |
@@ -83,7 +83,7 @@ Controllers connect GUI actions to functional modules.
 | --- | --- |
 | `training_controller.py` | Validates settings, manages training state, coordinates preview/recording/serial, and creates initial session JSON. |
 | `training_controller_config.py` | Training limits, state names, serial/recording toggles, STM32 response keywords, and status messages. |
-| `analysis_controller.py` | Lists recordings, runs analysis in a background thread, queues status messages, and merges results into session JSON. |
+| `analysis_controller.py` | Lists recordings/model versions, captures the selection, runs analysis in a thread, and merges results into session JSON. |
 | `analysis_controller_config.py` | Recording folder, valid video extensions, thread toggle, and analysis status messages. |
 | `review_controller.py` | Lists and loads `_session.json` files, extracts metrics, and resolves heatmap paths. |
 | `review_controller_config.py` | Legacy/general Review output configuration; session discovery uses the recordings directory. |
@@ -129,10 +129,11 @@ Analysis code owns computer vision and output generation.
 | --- | --- |
 | `analysis.py` | Main analysis pipeline. Opens video, computes table homography, runs ball/bounce tracking, and creates review outputs. |
 | `analysis_config.py` | Paths, model settings, thresholds, frame limits, table dimensions, heatmap settings, annotation settings, and JSON settings. |
+| `model_selection.py` | Version discovery, validation, table/ball path resolution, and output-tag generation. |
 | `video_checker.py` | Video existence/open/readability checks and metadata extraction. |
-| `table.py` | Loads `table_keypoints.pt`, detects table keypoints, and builds table objects. |
+| `table.py` | Loads the configured versioned table model, detects table keypoints, and builds table objects. |
 | `homography.py` | Builds sample frame indices, validates table corners, computes stable homography, maps image points to table space. |
-| `ball.py` | Loads `ball_player_detect.pt`, detects ball candidates, tracks the active ball, and stores recent positions/trails. |
+| `ball.py` | Loads the configured versioned ball/player model, detects candidates, and tracks the active ball. |
 | `bounce.py` | Detects bounce events from active-ball vertical motion and cooldown logic. |
 | `annotate.py` | Draws analysis overlays and writes annotated videos. |
 | `heatmap.py` | Maps bounce events into table coordinates and draws heatmap images/overlays. |
@@ -203,10 +204,25 @@ This folder is small but important because table detection and homography share 
 
 ## Model Files: `models/`
 
-| File | What it does |
-| --- | --- |
-| `table_keypoints.pt` | YOLO keypoint model for table corners and optional net points. |
-| `ball_player_detect.pt` | YOLO object model for ball and player detections. |
+Model versions are stored as complete sets:
+
+```text
+models/
+├── v1/
+│   ├── table_pose_01.pt
+│   └── ball_player_detect_01.pt
+└── v2/
+    ├── table_pose_02.pt
+    └── ball_player_detect_02.pt
+```
+
+`analysis/analysis_config.py` selects the active version. Both models currently
+inherit `DEFAULT_MODEL_VERSION`. Separate `TABLE_MODEL_VERSION` and
+`BALL_MODEL_VERSION` values allow independent selection later.
+
+The Analysis page discovers complete folders and lets the user select one
+version for the current run. The controller captures that selection before the
+background thread starts, so changing a widget later cannot alter a running job.
 
 Model paths are configured in:
 
@@ -272,7 +288,7 @@ comm/
 | Change STM32 protocol | `comm/serial.py`, `comm/serial_config.py` |
 | Change camera preview behavior | `capture/preview.py`, `capture/preview_config.py` |
 | Change recording resolution/FPS | `capture/recording_config.py` |
-| Change YOLO model paths or thresholds | `analysis/analysis_config.py` |
+| Select model versions or change thresholds | `analysis/analysis_config.py` |
 | Change table detection behavior | `analysis/table.py` |
 | Change homography behavior | `analysis/homography.py` |
 | Change ball tracking behavior | `analysis/ball.py` |

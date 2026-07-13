@@ -6,6 +6,15 @@ This is the system-level overview of the T-Cubed Jetson application. It explains
 how information moves between the user interface, controller layer, camera,
 STM32 launcher, computer-vision pipeline, saved session data, and Review page.
 
+For a progressive Selection-screen-to-algorithm view, see
+[Project Process Map](project_process_map.md). For planned documentation areas,
+see [Documentation Roadmap](documentation_roadmap.md).
+
+Reference documents:
+
+- [Configuration Reference](configuration_reference.md)
+- [Session JSON Schema](session_json_schema.md)
+
 For file-by-file responsibilities, see [Codebase Functionality Map](codebase_functionality.md).
 For workflow details, see [Training](training_workflow.md),
 [Analysis](analysis_pipeline.md), and [Review](review_workflow.md).
@@ -131,9 +140,9 @@ sequenceDiagram
     TC->>J: Create initial session metadata
     TC->>STM: START
 
-    U->>AC: Select recorded MKV and run analysis
-    AC->>CV: run_analysis(video_path)
-    CV-->>AC: Analysis result dictionary
+    U->>AC: Select recorded MKV and model version
+    AC->>CV: run_analysis(video_path, model versions)
+    CV-->>AC: Results, model metadata, and versioned artifact path
     AC->>J: Load, merge analysis results, and save
 
     U->>RP: Open Review
@@ -277,6 +286,13 @@ directly.
 
 `BALL_ANALYSIS_MAX_FRAMES` is currently `None`, so the configured pipeline is no
 longer limited to the earlier 600-frame test window.
+
+Both YOLO models currently use `DEFAULT_MODEL_VERSION = "v2"`. The table and
+ball paths have separate version selectors in `analysis_config.py`, allowing
+the two model types to use different version folders in future experiments.
+The current Analysis page presents one dropdown and applies that selection to
+both models. Annotated output names include the model tag, for example
+`annotate_sample_001_v2.mkv`.
 
 ---
 

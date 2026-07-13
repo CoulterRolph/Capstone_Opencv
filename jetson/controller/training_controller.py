@@ -1213,6 +1213,10 @@ class TrainingController:
                 "no_bounces_detected": True,
             },
             "heatmap": None,
+            "analysis_models": {},
+            "artifacts": {
+                "annotated_video_path": None,
+            },
         }
 
     def _save_session_metadata_if_possible(self):

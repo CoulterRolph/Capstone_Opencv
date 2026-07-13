@@ -16,6 +16,8 @@ It is responsible for:
 - Saving an annotated video
 - Saving a bounce heatmap
 - Merging analysis data into the Training-created session JSON
+- Selecting a complete model version from the Analysis page
+- Recording the selected model versions in the output name and session JSON
 ```
 
 Analysis is offline by design. Training records a video first; analysis processes that saved file afterward.
@@ -31,6 +33,7 @@ Analysis is offline by design. Training records a video first; analysis processe
 | `controller/analysis_controller_config.py` | Recording search path, valid recording extensions, threading toggle, status text. |
 | `analysis/analysis.py` | Main pipeline coordinator. |
 | `analysis/analysis_config.py` | Model paths, thresholds, frame limits, output toggles, heatmap/annotation settings. |
+| `analysis/model_selection.py` | Discovers complete version folders, validates selections, resolves paths, and builds output tags. |
 | `analysis/video_checker.py` | Opens video files and validates metadata/readability. |
 | `analysis/table.py` | Loads the table keypoint YOLO model and detects table corners. |
 | `analysis/homography.py` | Computes stable table homography and maps image points to table coordinates. |
@@ -47,21 +50,23 @@ Analysis is offline by design. Training records a video first; analysis processe
 ```mermaid
 flowchart TD
     Recording[Recorded MKV] --> SelectVideo[User selects recording]
+    Models[Complete folders in models/] --> SelectModels[User selects model version]
     SessionBefore[Initial _session.json] --> AnalysisController
     SelectVideo --> AnalysisPage[gui/analysis_page.py]
     AnalysisPage --> AnalysisController[controller/analysis_controller.py]
+    SelectModels --> AnalysisPage
 
-    AnalysisController --> Worker[Background worker thread]
+    AnalysisController --> Worker[Background worker with captured video and model selection]
     Worker --> RunAnalysis[analysis/analysis.py<br/>run_analysis(video_path)]
 
     RunAnalysis --> VideoCheck[video_checker.py<br/>Open and validate video]
     VideoCheck --> HomographySampling[Sample frames for table detection]
-    HomographySampling --> TableModel[table.py<br/>YOLO table_keypoints.pt]
+    HomographySampling --> TableModel[table.py<br/>Versioned table model]
     TableModel --> StableCorners[Stable table corners]
     StableCorners --> Homography[homography.py<br/>Compute table transform]
 
     Homography --> ResetVideo[Reset video to frame 0]
-    ResetVideo --> BallModel[ball.py<br/>YOLO ball_player_detect.pt]
+    ResetVideo --> BallModel[ball.py<br/>Versioned ball/player model]
     BallModel --> ActiveTrack[Active ball tracking]
     ActiveTrack --> BounceDetect[bounce.py<br/>Bounce detection]
 
@@ -102,11 +107,15 @@ This protects the rest of the pipeline from bad or incomplete recordings.
 
 ### 2. Table Detection
 
-`analysis/table.py` loads:
+`analysis/table.py` loads the configured table model. With the current default:
 
 ```text
-models/table_keypoints.pt
+models/v2/table_pose_02.pt
 ```
+
+The loader caches both the model and its resolved path. Reusing the same path is
+fast; requesting another version releases the old cached model before loading
+the new one.
 
 The table model is expected to return keypoints in this order:
 
@@ -147,11 +156,14 @@ This homography is what lets the system convert an image-space bounce into a tab
 
 ### 4. Ball Detection and Active Tracking
 
-`analysis/ball.py` loads:
+`analysis/ball.py` loads the configured ball/player model. With the current default:
 
 ```text
-models/ball_player_detect.pt
+models/v2/ball_player_detect_02.pt
 ```
+
+The ball loader uses the same path-aware cache rule, allowing v1 followed by v2
+without restarting the GUI.
 
 Current class IDs:
 
@@ -193,6 +205,13 @@ Optional ignoring of launch-region positions
 ```
 
 The output is a list of bounce events with image-space location and timing data.
+
+The current implementation uses a consecutive-frame vertical-velocity reversal,
+not an angle threshold. Camera perspective, missing detections, and track jitter
+can therefore cause real bounces to be missed. See
+[Bounce Detection Improvement Plan](bounce_detection_improvement_plan.md) for
+the diagnostic-first roadmap toward temporal trajectory fitting, confidence
+scoring, table gating, and perspective normalization.
 
 ### 6. Annotation
 
@@ -284,7 +303,7 @@ Current output locations:
 
 ```text
 review/annotated/
-    annotate_[recording_name].mkv
+    annotate_[recording_name]_[model tag].mkv
 
 review/heatmaps/
     heatmap_[recording_name].png
@@ -296,6 +315,9 @@ capture/recordings/
 The Review page uses session JSON to show bounce count, ball-detection rate,
 table status, and the referenced heatmap. Annotated-video playback remains
 future-facing.
+
+When both models use v2, the model tag is `v2`. If separate selectors are added
+later, a mixed selection uses a tag such as `table-v1_ball-v2`.
 
 ---
 

@@ -12,6 +12,11 @@ Only constants and configuration values should live here.
 
 from pathlib import Path
 
+try:
+    from model_selection import resolve_model_path
+except ModuleNotFoundError:
+    from analysis.model_selection import resolve_model_path
+
 
 # ============================================================
 # Project folders
@@ -33,6 +38,27 @@ CAPTURE_RECORDINGS_DIR = PROJECT_ROOT / "capture" / "recordings"
 
 
 # ============================================================
+# Model version selection
+# ============================================================
+
+# Select the model set used by the analysis pipeline.
+#
+# Current folder convention:
+#   models/v1/
+#   models/v2/
+#
+# Both model types use this version by default. To select different versions
+# later, replace either assignment with a version folder such as "v1".
+DEFAULT_MODEL_VERSION = "v2"
+
+TABLE_MODEL_VERSION = DEFAULT_MODEL_VERSION
+BALL_MODEL_VERSION = DEFAULT_MODEL_VERSION
+
+TABLE_MODEL_DIR = MODELS_DIR / TABLE_MODEL_VERSION
+BALL_MODEL_DIR = MODELS_DIR / BALL_MODEL_VERSION
+
+
+# ============================================================
 # Analysis settings
 # ============================================================
 
@@ -43,7 +69,11 @@ DEFAULT_RECORDING_PATH = CAPTURE_RECORDINGS_DIR / "sample_001.mkv"
 # Table model settings
 # ============================================================
 
-TABLE_MODEL_PATH = MODELS_DIR / "table_keypoints.pt"
+TABLE_MODEL_PATH = resolve_model_path(
+    models_dir=MODELS_DIR,
+    model_kind="table",
+    version=TABLE_MODEL_VERSION,
+)
 
 TABLE_MODEL_IMGSZ = 640
 TABLE_MODEL_CONFIDENCE = 0.25
@@ -138,7 +168,11 @@ HOMOGRAPHY_REJECT_OUTLIERS = True
 # Ball model settings
 # ============================================================
 
-BALL_MODEL_PATH = MODELS_DIR / "ball_player_detect.pt"
+BALL_MODEL_PATH = resolve_model_path(
+    models_dir=MODELS_DIR,
+    model_kind="ball",
+    version=BALL_MODEL_VERSION,
+)
 
 BALL_MODEL_IMGSZ = 640
 BALL_MODEL_CONFIDENCE = 0.25
