@@ -28,8 +28,8 @@ Recommended config section:
     # Bounce detection settings
     # ============================================================
 
-    BOUNCE_VY_DOWN_THRESHOLD = 120.0
-    BOUNCE_VY_UP_THRESHOLD = 120.0
+    BOUNCE_VY_DOWN_THRESHOLD = 60.0
+    BOUNCE_VY_UP_THRESHOLD = 60.0
 
     BOUNCE_COOLDOWN_FRAMES = 6
     BOUNCE_MIN_TRACK_UPDATES = 3
@@ -182,13 +182,13 @@ except ModuleNotFoundError:
 BOUNCE_VY_DOWN_THRESHOLD = getattr(
     analysis_config,
     "BOUNCE_VY_DOWN_THRESHOLD",
-    120.0,
+    60.0,
 )
 
 BOUNCE_VY_UP_THRESHOLD = getattr(
     analysis_config,
     "BOUNCE_VY_UP_THRESHOLD",
-    120.0,
+    60.0,
 )
 
 BOUNCE_COOLDOWN_FRAMES = getattr(

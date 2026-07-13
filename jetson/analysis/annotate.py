@@ -727,9 +727,9 @@ def draw_ball_trail(frame, ball_trail):
 # Launch region annotation
 # ============================================================
 
-def draw_launch_region(frame, launch_region, alpha=0.20):
+def draw_launch_region(frame, launch_region):
     """
-    Draw the launch region with a transparent fill and visible outline.
+    Draw the preferred launch region using the cyan debug-label scheme.
 
     Supported formats:
         dict with x1, y1, x2, y2
@@ -762,29 +762,16 @@ def draw_launch_region(frame, launch_region, alpha=0.20):
 
     x1, y1, x2, y2 = map(int, box)
 
-    # Create a temporary overlay for transparent fill.
-    overlay = frame.copy()
-    cv.rectangle(overlay, (x1, y1), (x2, y2), (255, 0, 255), -1)
+    launch_color = (255, 255, 0)
 
-    # Blend overlay onto frame.
-    cv.addWeighted(
-        overlay,
-        alpha,
-        frame,
-        1.0 - alpha,
-        0,
-        frame,
-    )
-
-    # Draw solid outline after blending.
-    cv.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
+    cv.rectangle(frame, (x1, y1), (x2, y2), launch_color, 2)
 
     draw_text(
         frame,
-        "LAUNCH REGION",
-        (x1, max(25, y1 - 10)),
-        font_scale=0.5,
-        color=(255, 0, 255),
+        "Preferred Launch Region",
+        (x1 + 4, max(22, y1 + 18)),
+        font_scale=0.6,
+        color=launch_color,
     )
 
     return frame

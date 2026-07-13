@@ -41,8 +41,8 @@ Current vy < -BOUNCE_VY_UP_THRESHOLD
 Current defaults in `analysis/analysis_config.py`:
 
 ```text
-BOUNCE_VY_DOWN_THRESHOLD = 120.0 pixels/second
-BOUNCE_VY_UP_THRESHOLD = 120.0 pixels/second
+BOUNCE_VY_DOWN_THRESHOLD = 60.0 pixels/second
+BOUNCE_VY_UP_THRESHOLD = 60.0 pixels/second
 BOUNCE_COOLDOWN_FRAMES = 6
 BOUNCE_MIN_TRACK_UPDATES = 3
 BOUNCE_USE_BBOX_BOTTOM = True

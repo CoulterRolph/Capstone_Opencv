@@ -130,8 +130,8 @@ preference. Change one weight group at a time and compare track switches/drops.
 
 | Setting | Default | Unit | Meaning |
 | --- | --- | --- | --- |
-| `BOUNCE_VY_DOWN_THRESHOLD` | `120.0` | pixels/second | Minimum downward image velocity used to arm/confirm. |
-| `BOUNCE_VY_UP_THRESHOLD` | `120.0` | pixels/second | Minimum upward reversal magnitude. |
+| `BOUNCE_VY_DOWN_THRESHOLD` | `60.0` | pixels/second | Minimum downward image velocity used to arm/confirm. |
+| `BOUNCE_VY_UP_THRESHOLD` | `60.0` | pixels/second | Minimum upward reversal magnitude. |
 | `BOUNCE_COOLDOWN_FRAMES` | `6` | processed frames | Prevents one contact from being counted repeatedly. |
 | `BOUNCE_MIN_TRACK_UPDATES` | `3` | updates | Minimum active-track age before trusting motion. |
 | `BOUNCE_USE_BBOX_BOTTOM` | `True` | boolean | Uses the lower box edge as the estimated contact `y`. |

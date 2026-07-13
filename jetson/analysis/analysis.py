@@ -91,6 +91,10 @@ ANNOTATION_DRAW_BALL_TRAIL = analysis_config.ANNOTATION_DRAW_BALL_TRAIL
 ANNOTATION_DRAW_BOUNCES = analysis_config.ANNOTATION_DRAW_BOUNCES
 ANNOTATION_DRAW_LAUNCH_REGION = analysis_config.ANNOTATION_DRAW_LAUNCH_REGION
 
+BALL_LAUNCH_X_MIN_FRAC = analysis_config.BALL_LAUNCH_X_MIN_FRAC
+BALL_LAUNCH_X_MAX_FRAC = analysis_config.BALL_LAUNCH_X_MAX_FRAC
+BALL_LAUNCH_Y_MAX_FRAC = analysis_config.BALL_LAUNCH_Y_MAX_FRAC
+
 HEATMAP_ENABLED = getattr(
     analysis_config,
     "HEATMAP_ENABLED",
@@ -331,6 +335,20 @@ def release_annotation_writer_if_needed(annotated_video_writer, annotated_video_
     print(f"{annotated_video_path}", flush=True)
     print("===========================================", flush=True)
     print()
+
+
+def build_launch_region_annotation(video_info):
+    """Build the displayed launch box from the ball-tracking configuration."""
+
+    frame_width = int(video_info["width"])
+    frame_height = int(video_info["height"])
+
+    return {
+        "x1": int(frame_width * BALL_LAUNCH_X_MIN_FRAC),
+        "y1": 0,
+        "x2": int(frame_width * BALL_LAUNCH_X_MAX_FRAC),
+        "y2": int(frame_height * BALL_LAUNCH_Y_MAX_FRAC),
+    }
 
 
 def write_annotated_frame_if_enabled(
@@ -1227,6 +1245,8 @@ def process_ball_and_bounce_tracking_for_video(
         model_version_tag=model_version_tag,
     )
 
+    launch_region = build_launch_region_annotation(video_info)
+
     try:
         while True:
             if should_stop_ball_analysis(
@@ -1308,7 +1328,7 @@ def process_ball_and_bounce_tracking_for_video(
                 active_ball_data=active_ball_data,
                 ball_trail=ball_trail,
                 bounce_events=annotation_bounce_events,
-                launch_region=None,
+                launch_region=launch_region,
                 heatmap_state=heatmap_state,
                 homography_output_size=heatmap_overlay_output_size,
             )
