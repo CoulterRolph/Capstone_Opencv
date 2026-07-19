@@ -231,6 +231,8 @@ ANALYSIS_DISPLAY_BODY_TEXT = (
 ANALYSIS_VIDEO_SELECTION_LABEL_TEXT = "Select Recording Video"
 START_ANALYSIS_BUTTON_TEXT = "Start Analysis"
 REFRESH_RECORDINGS_BUTTON_TEXT = "Refresh Videos"
+ANALYSIS_PROGRESS_TITLE_TEXT = "Analysis Progress"
+ANALYSIS_PROGRESS_READY_TEXT = "Ready to analyze a recording."
 
 
 # ============================================================

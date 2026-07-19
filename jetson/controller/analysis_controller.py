@@ -26,6 +26,7 @@ Important:
 
 import importlib.util
 import inspect
+import math
 import queue
 import sys
 import threading
@@ -166,6 +167,136 @@ class AnalysisController:
         """Return the configured default used by the Analysis page."""
 
         return analysis_config.DEFAULT_MODEL_VERSION
+
+    def get_previous_analysis_summary(self, video_path):
+        """Return normalized saved analysis details for a recording, if any."""
+
+        if load_session_log is None:
+            return None
+
+        try:
+            session_log = load_session_log(video_path)
+        except FileNotFoundError:
+            return None
+        except Exception as error:
+            raise ValueError(
+                f"Could not read session JSON for {Path(video_path).name}: {error}"
+            ) from error
+
+        return self._extract_previous_analysis_summary(session_log)
+
+    @staticmethod
+    def _extract_previous_analysis_summary(session_log):
+        """Distinguish saved analysis output from empty Training placeholders."""
+
+        if not isinstance(session_log, dict):
+            return None
+
+        analysis_models = session_log.get("analysis_models")
+        if not isinstance(analysis_models, dict):
+            analysis_models = {}
+
+        ball_tracking = session_log.get("ball_tracking")
+        if not isinstance(ball_tracking, dict):
+            ball_tracking = {}
+
+        ball_summary = ball_tracking.get("summary")
+        if not isinstance(ball_summary, dict):
+            ball_summary = {}
+
+        artifacts = session_log.get("artifacts")
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+
+        heatmap = session_log.get("heatmap")
+        if not isinstance(heatmap, dict):
+            heatmap = {}
+
+        summary = session_log.get("summary")
+        if not isinstance(summary, dict):
+            summary = {}
+
+        try:
+            analysis_processing_time = float(
+                summary.get("analysis_processing_time_seconds")
+            )
+            if not math.isfinite(analysis_processing_time) or analysis_processing_time < 0:
+                analysis_processing_time = None
+            else:
+                analysis_processing_time = round(analysis_processing_time, 2)
+        except (TypeError, ValueError):
+            analysis_processing_time = None
+
+        try:
+            frames_analyzed = int(ball_summary.get("frames_processed", 0) or 0)
+        except (TypeError, ValueError):
+            frames_analyzed = 0
+
+        has_saved_artifact = bool(
+            artifacts.get("annotated_video_path") or heatmap.get("image_path")
+        )
+        has_analysis_data = (
+            bool(analysis_models)
+            or frames_analyzed > 0
+            or has_saved_artifact
+            or analysis_processing_time is not None
+        )
+
+        if not has_analysis_data:
+            return None
+
+        video_info = session_log.get("video")
+        if not isinstance(video_info, dict):
+            video_info = {}
+
+        try:
+            total_frames = int(video_info.get("frame_count", 0) or 0)
+        except (TypeError, ValueError):
+            total_frames = 0
+
+        bounces = session_log.get("bounces")
+        if not isinstance(bounces, list):
+            bounces = []
+
+        try:
+            bounce_count = int(summary.get("total_bounces", len(bounces)) or 0)
+        except (TypeError, ValueError):
+            bounce_count = len(bounces)
+
+        table_info = session_log.get("table")
+        if not isinstance(table_info, dict):
+            table_info = {}
+
+        homography_info = session_log.get("homography")
+        if not isinstance(homography_info, dict):
+            homography_info = {}
+
+        table_version = analysis_models.get("table_version")
+        ball_version = analysis_models.get("ball_version")
+        output_tag = analysis_models.get("output_tag")
+
+        if table_version and ball_version and table_version != ball_version:
+            model_label = f"table={table_version}, ball={ball_version}"
+        elif table_version or ball_version:
+            model_label = str(table_version or ball_version)
+        elif output_tag:
+            model_label = str(output_tag)
+        else:
+            model_label = None
+
+        return {
+            "frames_analyzed": max(0, frames_analyzed),
+            "total_frames": max(0, total_frames),
+            "bounce_count": max(0, bounce_count),
+            "table_detected": bool(table_info.get("table_detected", False)),
+            "homography_found": bool(
+                homography_info.get("homography_found", False)
+            ),
+            "model_label": model_label,
+            "table_model_version": table_version,
+            "ball_model_version": ball_version,
+            "analysis_processing_time_seconds": analysis_processing_time,
+        }
 
     def start_analysis(
         self,
@@ -354,10 +485,26 @@ class AnalysisController:
 
             self.last_analysis_result = analysis_result
 
+            self._forward_progress_event(
+                {
+                    "stage": "session_merge",
+                    "percent": 98,
+                    "message": "Saving results to the session record.",
+                }
+            )
+
             # Merge analysis results into the session JSON
             self._merge_analysis_into_session_if_possible(
                 video_path=video_path,
                 analysis_result=analysis_result,
+            )
+
+            self._forward_progress_event(
+                {
+                    "stage": "finalizing",
+                    "percent": 99,
+                    "message": "Finalizing analysis.",
+                }
             )
 
             self._send_message(
@@ -400,6 +547,9 @@ class AnalysisController:
 
             if "ball_model_version" in function_signature.parameters:
                 call_arguments["ball_model_version"] = model_selection.ball_version
+
+            if "progress_callback" in function_signature.parameters:
+                call_arguments["progress_callback"] = self._forward_progress_event
 
             return run_analysis(**call_arguments)
 
@@ -531,12 +681,25 @@ class AnalysisController:
     # Queue messaging
     # --------------------------------------------------------
 
+    def _forward_progress_event(self, progress_event):
+        """Forward one structured pipeline progress event to the GUI queue."""
+
+        if not isinstance(progress_event, dict):
+            return
+
+        self._send_message(
+            message_type="progress",
+            message_text=progress_event.get("message", "Analysis is running."),
+            progress=progress_event,
+        )
+
     def _send_message(
         self,
         message_type,
         message_text,
         result=None,
         error_details=None,
+        progress=None,
     ):
         """
         Send a status message to the GUI through the message queue.
@@ -547,6 +710,7 @@ class AnalysisController:
             "message": message_text,
             "result": result,
             "error_details": error_details,
+            "progress": progress,
         }
 
         self.message_queue.put(

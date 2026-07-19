@@ -188,6 +188,45 @@ def draw_text(
     )
 
 
+def draw_text_box(
+    frame,
+    text,
+    origin,
+    font_scale=0.55,
+    color=(255, 255, 255),
+    thickness=2,
+):
+    """Draw sample.py-style text on an opaque black background."""
+
+    x, y = origin
+    (width, height), baseline = cv.getTextSize(
+        text,
+        cv.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        thickness,
+    )
+
+    cv.rectangle(
+        frame,
+        (x - 4, y - height - 6),
+        (x + width + 4, y + baseline + 4),
+        (0, 0, 0),
+        -1,
+    )
+    cv.putText(
+        frame,
+        text,
+        (x, y),
+        cv.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        color,
+        thickness,
+        cv.LINE_AA,
+    )
+
+    return frame
+
+
 def draw_point(
     frame,
     point,
@@ -606,7 +645,18 @@ def get_ball_box(ball_data):
     Extract ball bounding box from common formats.
     """
 
-    return get_value(ball_data, ["box", "bbox", "xyxy"])
+    box = get_value(ball_data, ["box", "bbox", "xyxy"])
+
+    if isinstance(box, dict):
+        x1 = get_value(box, ["x1", "left"])
+        y1 = get_value(box, ["y1", "top"])
+        x2 = get_value(box, ["x2", "right"])
+        y2 = get_value(box, ["y2", "bottom"])
+
+        if None not in [x1, y1, x2, y2]:
+            return (x1, y1, x2, y2)
+
+    return box
 
 
 def get_ball_confidence(ball_data):
@@ -615,6 +665,127 @@ def get_ball_confidence(ball_data):
     """
 
     return get_value(ball_data, ["confidence", "conf", "score"])
+
+
+def get_ball_motion(ball_data):
+    """Extract the candidate motion estimate."""
+
+    return get_value(ball_data, ["motion_estimate", "motion_est", "motion"])
+
+
+def get_ball_velocity(ball_data):
+    """Extract (vx, vy) from nested or flat tracking data."""
+
+    velocity = get_value(ball_data, ["velocity"])
+
+    if isinstance(velocity, dict):
+        return (
+            float(velocity.get("vx", 0.0)),
+            float(velocity.get("vy", 0.0)),
+        )
+
+    return (
+        float(get_value(ball_data, ["vx"], 0.0)),
+        float(get_value(ball_data, ["vy"], 0.0)),
+    )
+
+
+def centers_match(first_ball, second_ball):
+    """Return True when two annotations refer to the same detection center."""
+
+    first_center = get_ball_center(first_ball)
+    second_center = get_ball_center(second_ball)
+
+    if first_center is None or second_center is None:
+        return False
+
+    return (
+        int(first_center[0]) == int(second_center[0])
+        and int(first_center[1]) == int(second_center[1])
+    )
+
+
+def draw_candidate_annotations(
+    frame,
+    candidates,
+    active_ball_data=None,
+    pending_challenger=None,
+):
+    """Draw non-active, non-challenger detections in green."""
+
+    if candidates is None:
+        return frame
+
+    candidate_color = (0, 255, 0)
+
+    for candidate in candidates:
+        if centers_match(candidate, active_ball_data):
+            continue
+
+        if centers_match(candidate, pending_challenger):
+            continue
+
+        box = get_ball_box(candidate)
+        center = get_ball_center(candidate)
+        confidence = get_ball_confidence(candidate)
+        motion = get_ball_motion(candidate)
+
+        draw_box(frame, box, color=candidate_color, thickness=2)
+        draw_point(frame, center, radius=4, color=candidate_color, thickness=-1)
+
+        if center is not None:
+            label = (
+                f"cand c={float(confidence or 0.0):.2f} "
+                f"m={float(motion or 0.0):.1f}"
+            )
+            draw_text_box(
+                frame,
+                label,
+                (int(center[0]) + 8, max(20, int(center[1]) - 8)),
+                font_scale=0.42,
+                color=candidate_color,
+                thickness=1,
+            )
+
+    return frame
+
+
+def draw_challenger_annotation(
+    frame,
+    challenger_data,
+    confirmation_count=0,
+    confirmation_frames=3,
+):
+    """Draw the pending challenger in purple with its confirmation progress."""
+
+    if challenger_data is None:
+        return frame
+
+    challenger_color = (255, 0, 255)
+    box = get_ball_box(challenger_data)
+    center = get_ball_center(challenger_data)
+    confidence = get_ball_confidence(challenger_data)
+    motion = get_ball_motion(challenger_data)
+
+    draw_box(frame, box, color=challenger_color, thickness=2)
+    draw_point(frame, center, radius=5, color=challenger_color, thickness=-1)
+
+    if center is not None:
+        label = (
+            f"CHALLENGER | c={float(confidence or 0.0):.2f} | "
+            f"m={float(motion or 0.0):.1f} | "
+            f"confirm={int(confirmation_count)}/{int(confirmation_frames)}"
+        )
+        draw_text_box(
+            frame,
+            label,
+            (int(center[0]) + 8, max(20, int(center[1]) - 8)),
+            font_scale=0.42,
+            color=challenger_color,
+            thickness=1,
+        )
+
+    return frame
 
 
 def draw_ball_annotations(frame, ball_data):
@@ -629,11 +800,13 @@ def draw_ball_annotations(frame, ball_data):
     center = get_ball_center(ball_data)
     confidence = get_ball_confidence(ball_data)
 
+    active_color = (0, 0, 255)
+
     # Active ball box.
     draw_box(
         frame,
         box,
-        color=(0, 255, 0),
+        color=active_color,
         thickness=2,
     )
 
@@ -643,26 +816,35 @@ def draw_ball_annotations(frame, ball_data):
             frame,
             center,
             radius=6,
-            color=(0, 0, 255),
+            color=active_color,
             thickness=-1,
         )
 
-        draw_text(
+        vx, vy = get_ball_velocity(ball_data)
+        active_label = (
+            f"ACTIVE | conf={float(confidence or 0.0):.2f} | "
+            f"vx={vx:.1f} | vy={vy:.1f}"
+        )
+        draw_text_box(
             frame,
-            "ACTIVE BALL",
-            (int(center[0]) + 10, int(center[1]) - 10),
-            font_scale=0.5,
-            color=(0, 0, 255),
+            active_label,
+            (int(center[0]) + 10, max(20, int(center[1]) - 12)),
+            font_scale=0.45,
+            color=active_color,
+            thickness=1,
         )
 
-    # Confidence label.
-    if confidence is not None and center is not None:
-        draw_text(
+        motion = get_ball_motion(ball_data)
+        draw_text_box(
             frame,
-            f"conf: {float(confidence):.2f}",
-            (int(center[0]) + 10, int(center[1]) + 15),
-            font_scale=0.5,
-            color=(0, 255, 0),
+            (
+                f"active cand c={float(confidence or 0.0):.2f} "
+                f"m={float(motion or 0.0):.1f}"
+            ),
+            (int(center[0]) + 10, int(center[1]) + 12),
+            font_scale=0.38,
+            color=active_color,
+            thickness=1,
         )
 
     return frame
@@ -716,7 +898,7 @@ def draw_ball_trail(frame, ball_trail):
             frame,
             (int(previous_point[0]), int(previous_point[1])),
             (int(current_point[0]), int(current_point[1])),
-            (255, 255, 0),
+            (255, 0, 0),
             2,
         )
 
@@ -843,42 +1025,76 @@ def draw_bounce_annotations(frame, bounce_events):
 
         x, y = position
 
-        # Outer marker.
+        bounce_color = (0, 255, 255)
+
+        # Compact yellow markers match the reference diagnostic output.
         cv.circle(
             frame,
             (int(x), int(y)),
-            16,
-            (0, 165, 255),
-            3,
+            6,
+            bounce_color,
+            2,
         )
-
-        # Inner marker.
-        cv.circle(
-            frame,
-            (int(x), int(y)),
-            4,
-            (0, 165, 255),
-            -1,
-        )
-
-        label = f"Bounce {index}"
-
-        bounce_frame = get_bounce_frame_index(bounce_data)
-        bounce_time = get_bounce_time_seconds(bounce_data)
-
-        if bounce_frame is not None:
-            label += f" F{bounce_frame}"
-
-        if bounce_time is not None:
-            label += f" {float(bounce_time):.2f}s"
 
         draw_text(
             frame,
-            label,
-            (int(x) + 18, int(y) - 18),
-            font_scale=0.5,
-            color=(0, 165, 255),
+            f"B{index}",
+            (int(x) + 7, max(18, int(y) - 7)),
+            font_scale=0.42,
+            color=bounce_color,
+            thickness=1,
         )
+
+    return frame
+
+
+def draw_bounce_tracker_metrics(
+    frame,
+    bounce_events,
+    bounce_armed=False,
+    bounce_cooldown=0,
+):
+    """Draw last-bounce and tracker-state diagnostics around existing overlays."""
+
+    bounce_color = (0, 255, 255)
+    bounce_events = [] if bounce_events is None else bounce_events
+
+    if bounce_events:
+        last_position = get_bounce_position(bounce_events[-1])
+
+        if last_position is not None:
+            draw_text(
+                frame,
+                f"Last Bounce: x={int(last_position[0])} y={int(last_position[1])}",
+                (20, 180),
+                font_scale=0.55,
+                color=bounce_color,
+            )
+
+    frame_height = frame.shape[0]
+    first_line_y = max(25, frame_height - 60)
+
+    draw_text(
+        frame,
+        f"Bounces: {len(bounce_events)}",
+        (20, first_line_y),
+        font_scale=0.5,
+        color=bounce_color,
+    )
+    draw_text(
+        frame,
+        f"Bounce Armed: {bool(bounce_armed)}",
+        (20, first_line_y + 20),
+        font_scale=0.5,
+        color=bounce_color,
+    )
+    draw_text(
+        frame,
+        f"Bounce Cooldown: {int(bounce_cooldown)}",
+        (20, first_line_y + 40),
+        font_scale=0.5,
+        color=bounce_color,
+    )
 
     return frame
 
@@ -916,6 +1132,12 @@ def annotate_frame(
     ball_trail=None,
     bounce_events=None,
     launch_region=None,
+    ball_candidates=None,
+    pending_challenger=None,
+    pending_challenger_count=0,
+    challenger_confirm_frames=3,
+    bounce_armed=False,
+    bounce_cooldown=0,
     draw_frame_info_enabled=True,
     draw_table=True,
     draw_ball=True,
@@ -952,6 +1174,21 @@ def annotate_frame(
             ball_trail,
         )
 
+    if draw_ball:
+        annotated_frame = draw_candidate_annotations(
+            annotated_frame,
+            ball_candidates,
+            active_ball_data=active_ball_data,
+            pending_challenger=pending_challenger,
+        )
+
+        annotated_frame = draw_challenger_annotation(
+            annotated_frame,
+            pending_challenger,
+            confirmation_count=pending_challenger_count,
+            confirmation_frames=challenger_confirm_frames,
+        )
+
     if draw_ball or draw_active_ball:
         annotated_frame = draw_ball_annotations(
             annotated_frame,
@@ -973,6 +1210,14 @@ def annotate_frame(
             fps,
             bounce_count=bounce_count,
             active_ball_found=active_ball_found,
+        )
+
+    if draw_bounces:
+        annotated_frame = draw_bounce_tracker_metrics(
+            annotated_frame,
+            bounce_events=bounce_events,
+            bounce_armed=bounce_armed,
+            bounce_cooldown=bounce_cooldown,
         )
 
     return annotated_frame
@@ -1026,6 +1271,22 @@ def test_annotate_single_frame():
         "bbox": (749.6, 619.2, 773.6, 643.2),
         "center": (761.6, 631.2),
         "confidence": 0.91,
+        "velocity": {"vx": 82.0, "vy": -145.0},
+        "motion_estimate": 12.5,
+    }
+
+    fake_challenger = {
+        "bbox": (680.0, 280.0, 696.0, 296.0),
+        "center": (688.0, 288.0),
+        "confidence": 0.84,
+        "motion_estimate": 18.0,
+    }
+
+    fake_candidate = {
+        "bbox": (520.0, 250.0, 536.0, 266.0),
+        "center": (528.0, 258.0),
+        "confidence": 0.76,
+        "motion_estimate": 9.5,
     }
 
     fake_ball_trail = deque(maxlen=30)
@@ -1046,8 +1307,12 @@ def test_annotate_single_frame():
         }
     ]
 
-    # Disable this until launch region is computed from real table coordinates.
-    fake_launch_region = None
+    fake_launch_region = {
+        "x1": int(frame_width * 0.25),
+        "y1": 0,
+        "x2": int(frame_width * 0.75),
+        "y2": int(frame_height * 0.45),
+    }
 
     annotated_frame = annotate_frame(
         frame=fake_frame,
@@ -1058,6 +1323,16 @@ def test_annotate_single_frame():
         ball_trail=fake_ball_trail,
         bounce_events=fake_bounces,
         launch_region=fake_launch_region,
+        ball_candidates=[
+            fake_active_ball,
+            fake_challenger,
+            fake_candidate,
+        ],
+        pending_challenger=fake_challenger,
+        pending_challenger_count=2,
+        challenger_confirm_frames=3,
+        bounce_armed=True,
+        bounce_cooldown=4,
     )
 
     output_path = (

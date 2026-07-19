@@ -114,33 +114,58 @@ Do not hide poor table detections by making outlier limits extremely large.
 | `BALL_CHALLENGER_SAME_RADIUS` | `60.0` | pixels | One challenger is split into multiple candidates. | Nearby unrelated candidates are treated as one. |
 | `BALL_MAX_TRAIL_POINTS` | `40` | points | A longer visual trail is needed. | The overlay is cluttered. |
 
+Estimated return-speed filtering:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SPEED_POSITION_WINDOW` | `8` | Maximum recent positions considered before a bounce. |
+| `SPEED_MIN_SEGMENT_SAMPLES` | `2` | Minimum valid motion segments required for one estimate. |
+| `SPEED_MAX_FRAME_GAP` | `3` | Largest accepted gap between consecutive tracked positions. |
+| `SPEED_MIN_KMH` | `1.0` | Reject lower stationary/noise estimates. |
+| `SPEED_MAX_KMH` | `200.0` | Reject physically implausible tracker jumps. |
+| `SPEED_OUTLIER_MAD_MULTIPLIER` | `3.0` | Robust segment-speed outlier threshold. |
+
+These settings produce a monocular two-dimensional table-plane estimate, not a
+full 3D speed measurement.
+
 Launch-region fractions use frame width/height values from `0.0` to `1.0`:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `BALL_LAUNCH_X_MIN_FRAC` | `0.25` | Left launch-region boundary. |
 | `BALL_LAUNCH_X_MAX_FRAC` | `0.75` | Right launch-region boundary. |
-| `BALL_LAUNCH_Y_MAX_FRAC` | `0.45` | Bottom boundary of the upper launch region. |
-| `BALL_INIT_REQUIRE_LAUNCH_REGION` | `True` | Requires initial active-track selection near the expected launch area. |
+| `BALL_LAUNCH_Y_MAX_FRAC` | `0.45` | Fallback bottom boundary when valid table net posts are unavailable. |
+| `BALL_INIT_REQUIRE_LAUNCH_REGION` | `False` | Matches tracker.py: launch candidates receive a bonus but are not required. |
 
 Initial and challenger weights combine motion, confidence, and launch-region
 preference. Change one weight group at a time and compare track switches/drops.
+
+At runtime, table-pose keypoints 4 and 5 are stabilized across accepted table
+detections. Their average `y` coordinate becomes the launch rectangle's bottom
+edge, so its height is the video area from `y=0` down to the detected net posts.
+The same rectangle is used by tracking and annotation. If neither post is
+valid, the pipeline falls back to `BALL_LAUNCH_Y_MAX_FRAC`.
 
 ### Bounce detection
 
 | Setting | Default | Unit | Meaning |
 | --- | --- | --- | --- |
-| `BOUNCE_VY_DOWN_THRESHOLD` | `60.0` | pixels/second | Minimum downward image velocity used to arm/confirm. |
-| `BOUNCE_VY_UP_THRESHOLD` | `60.0` | pixels/second | Minimum upward reversal magnitude. |
+| `BOUNCE_VY_DOWN_THRESHOLD` | `20.0` | pixels/second | Tuned below tracker.py's original 120 px/s value to arm on shallower descents. |
+| `BOUNCE_VY_UP_THRESHOLD` | `20.0` | pixels/second | Tuned below tracker.py's original 120 px/s value to confirm shallower upward reversals. |
 | `BOUNCE_COOLDOWN_FRAMES` | `6` | processed frames | Prevents one contact from being counted repeatedly. |
 | `BOUNCE_MIN_TRACK_UPDATES` | `3` | updates | Minimum active-track age before trusting motion. |
-| `BOUNCE_USE_BBOX_BOTTOM` | `True` | boolean | Uses the lower box edge as the estimated contact `y`. |
-| `BOUNCE_IGNORE_LAUNCH_REGION` | `True` | boolean | Ignores bounce logic in the configured launch region. |
+| `BOUNCE_HISTORY_FRAMES` | `9` | positions | Rolling temporal window used for shallow reversals. |
+| `BOUNCE_INCOMING_MIN_POINTS` / `MAX_POINTS` | `3` / `4` | positions | Range used to fit the incoming slope. |
+| `BOUNCE_OUTGOING_MIN_POINTS` / `MAX_POINTS` | `2` / `3` | positions | Range used to fit the outgoing slope. |
+| `BOUNCE_CONTACT_PLATEAU_TOLERANCE_PX` | `0.05` | pixels | Groups effectively equal contact-height samples. |
+| `BOUNCE_USE_BBOX_BOTTOM` | `True` | boolean | Uses bbox-bottom motion instead of center motion for bounce fitting. |
+| `BOUNCE_IGNORE_LAUNCH_REGION` | `True` | boolean | Documented compatibility setting; tracker behavior always ignores the launch region. |
 
 Do not tune bounce thresholds from one apparent failure. First use the
 diagnostic plan in [Bounce Detection Improvement Plan](bounce_detection_improvement_plan.md).
-The current algorithm uses consecutive-frame vertical velocity, so perspective
-or a missed frame may be the cause rather than the threshold value.
+The current algorithm fits short incoming and outgoing temporal slopes. It
+preserves floating-point detector coordinates so shallow subpixel motion is not
+quantized away before fitting.
 
 ### Heatmap output
 
@@ -181,11 +206,14 @@ File: `controller/training_controller_config.py`
 
 | Setting group | Current range/default | Unit |
 | --- | --- | --- |
-| Ball speed | `0–100`, default `50` | launcher value |
+| Ball speed | `55–100`, default `75` | launcher value |
 | Pace | `0.1–60.0`, default `1.5` | seconds in GUI |
+| Start delay | `0–15`, default `0`, increment `0.5` | seconds before full training |
 | Number of shots | `1–999`, default `10` | balls |
 
 The controller converts pace seconds to milliseconds before sending `SETTINGS`.
+Start delay is temporary controller state and is not sent to the STM32 or saved
+in the session JSON.
 
 ### Hardware toggles
 

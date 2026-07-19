@@ -39,6 +39,7 @@ import importlib.util
 import json
 import queue
 import sys
+import threading
 import time
 
 
@@ -192,6 +193,9 @@ class TrainingController:
         self.recording_module = None
         self.recorder = None
 
+        self._start_delay_cancel_event = None
+        self._start_delay_thread = None
+
     # --------------------------------------------------------
     # Public state helpers
     # --------------------------------------------------------
@@ -223,6 +227,7 @@ class TrainingController:
         """
 
         training_states = [
+            training_controller_config.STATE_DELAYING,
             training_controller_config.STATE_STARTING,
             training_controller_config.STATE_TRAINING,
             training_controller_config.STATE_STOPPING,
@@ -353,8 +358,13 @@ class TrainingController:
         try:
             ball_speed = int(ball_speed)
 
-        except ValueError:
-            raise ValueError("Ball Speed must be a whole number from 0 to 100.")
+        except (TypeError, ValueError):
+            minimum_speed = training_controller_config.MIN_BALL_SPEED
+            maximum_speed = training_controller_config.MAX_BALL_SPEED
+            raise ValueError(
+                "Ball Speed must be a whole number from "
+                f"{minimum_speed} to {maximum_speed}."
+            )
 
         minimum_speed = training_controller_config.MIN_BALL_SPEED
         maximum_speed = training_controller_config.MAX_BALL_SPEED
@@ -386,6 +396,30 @@ class TrainingController:
             )
 
         return pace_seconds
+
+    def _validate_start_delay_seconds(self, start_delay_seconds):
+        """
+        Validate the temporary delay before a full training session starts.
+        """
+
+        try:
+            start_delay_seconds = float(start_delay_seconds)
+        except (TypeError, ValueError):
+            raise ValueError("Start Delay must be a number in seconds.")
+
+        minimum_delay = training_controller_config.MIN_START_DELAY_SECONDS
+        maximum_delay = training_controller_config.MAX_START_DELAY_SECONDS
+
+        if (
+            start_delay_seconds < minimum_delay
+            or start_delay_seconds > maximum_delay
+        ):
+            raise ValueError(
+                "Start Delay must be between "
+                f"{minimum_delay:g} and {maximum_delay:g} seconds."
+            )
+
+        return start_delay_seconds
 
     def _validate_number_of_shots(self, number_of_shots):
         """
@@ -509,25 +543,21 @@ class TrainingController:
         pace_seconds,
         number_of_shots,
         session_name=None,
+        start_delay_seconds=0.0,
     ):
         """
         Start training.
 
-        Current sequence:
+        Sequence:
         1. Validate settings.
         2. Stop preview if running.
-        3. Send/dry-run SETTING to STM32.
-        4. Start recording placeholder.
-        5. Send/dry-run START to STM32.
-        6. Set state to TRAINING.
+        3. Wait for the optional, cancellable start delay.
+        4. Send SETTING to STM32.
+        5. Start high-FPS GStreamer/MKV recording.
+        6. Send START to STM32 and enter TRAINING.
 
-        Future real sequence:
-        1. Validate settings.
-        2. Stop preview and release camera.
-        3. Send SETTING to STM32.
-        4. Start high-FPS GStreamer/MKV recording.
-        5. Send START to STM32.
-        6. Listen for STM32 messages.
+        The start delay is temporary GUI/controller state. It is not sent to
+        the STM32 and is not stored in the session JSON.
         """
 
         if self.is_training_running():
@@ -542,6 +572,9 @@ class TrainingController:
                 ball_speed=ball_speed,
                 pace_seconds=pace_seconds,
                 number_of_shots=number_of_shots,
+            )
+            validated_start_delay = self._validate_start_delay_seconds(
+                start_delay_seconds
             )
 
         except ValueError as error:
@@ -560,11 +593,65 @@ class TrainingController:
         if self.is_preview_running():
             self.stop_preview()
 
-        self.state = training_controller_config.STATE_STARTING
-
         self._put_status_message(
             training_controller_config.STATUS_SETTINGS_VALIDATED,
         )
+
+        if validated_start_delay > 0:
+            self.state = training_controller_config.STATE_DELAYING
+            self._start_delay_cancel_event = threading.Event()
+            self._start_delay_thread = threading.Thread(
+                target=self._run_start_delay,
+                args=(validated_start_delay, settings),
+                daemon=True,
+                name="training-start-delay",
+            )
+            self._start_delay_thread.start()
+            return True
+
+        return self._begin_training_sequence(settings)
+
+    def _run_start_delay(self, start_delay_seconds, settings):
+        """
+        Wait without blocking Tkinter, then begin the existing start sequence.
+        """
+
+        remaining_seconds = start_delay_seconds
+        cancel_event = self._start_delay_cancel_event
+
+        while remaining_seconds > 0:
+            self._put_status_message(
+                "Training starts in "
+                f"{remaining_seconds:g} second"
+                f"{'s' if remaining_seconds != 1 else ''}."
+            )
+
+            wait_seconds = min(1.0, remaining_seconds)
+            if cancel_event.wait(wait_seconds):
+                return
+
+            remaining_seconds = max(
+                0.0,
+                round(remaining_seconds - wait_seconds, 1),
+            )
+
+        if (
+            cancel_event.is_set()
+            or self.state != training_controller_config.STATE_DELAYING
+        ):
+            return
+
+        self.state = training_controller_config.STATE_STARTING
+        self._start_delay_thread = None
+        self._start_delay_cancel_event = None
+        self._begin_training_sequence(settings)
+
+    def _begin_training_sequence(self, settings):
+        """
+        Run the unchanged recording and STM32 training-start sequence.
+        """
+
+        self.state = training_controller_config.STATE_STARTING
 
         try:
             self._put_status_message(
@@ -721,6 +808,18 @@ class TrainingController:
                 "Training is not running.",
             )
 
+            return True
+
+        if self.state == training_controller_config.STATE_DELAYING:
+            if self._start_delay_cancel_event is not None:
+                self._start_delay_cancel_event.set()
+
+            self._start_delay_thread = None
+            self._start_delay_cancel_event = None
+            self.state = training_controller_config.STATE_IDLE
+            self._put_status_message(
+                training_controller_config.STATUS_START_DELAY_CANCELLED,
+            )
             return True
 
         self.state = training_controller_config.STATE_STOPPING

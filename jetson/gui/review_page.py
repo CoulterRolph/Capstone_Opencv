@@ -8,9 +8,9 @@ Current scope:
 - Let the user select a training session from a dropdown.
 - Display key metrics from the session JSON.
 - Preview the heatmap if available.
+- Open the annotated video in VLC if available.
 
 Future scope:
-- Open annotated videos.
 - Generate reports.
 - Compare multiple sessions.
 """
@@ -86,10 +86,13 @@ class ReviewPage(tk.Frame):
         self.session_paths_by_name = {}
         self.selected_session_name = tk.StringVar()
         self.current_session_data = None
+        self.current_annotated_video_path = None
 
         self.status_label = None
         self.session_dropdown = None
         self.refresh_sessions_button = None
+        self.annotated_video_status_label = None
+        self.open_annotated_video_button = None
         self.back_button = None
 
         # Stats display labels
@@ -203,6 +206,10 @@ class ReviewPage(tk.Frame):
             parent=display_frame,
         )
 
+        self._build_annotated_video_section(
+            parent=display_frame,
+        )
+
         self._build_heatmap_section(
             parent=display_frame,
         )
@@ -259,7 +266,7 @@ class ReviewPage(tk.Frame):
 
     def _build_stats_section(self, parent):
         """
-        Build 3 stats boxes for key metrics.
+        Build two rows of three key metric boxes.
         """
 
         stats_outer_frame = tk.Frame(
@@ -299,22 +306,26 @@ class ReviewPage(tk.Frame):
         stats_container.columnconfigure(1, weight=1)
         stats_container.columnconfigure(2, weight=1)
 
-        # Create 3 stat boxes
+        # Create two rows of three stat boxes.
         stat_names = [
             "Total Bounces",
             "Ball Detection Rate",
             "Table Status",
+            "Average Return Speed",
+            "Fastest Return Speed",
+            "Shot Percentage",
         ]
 
         for i, stat_name in enumerate(stat_names):
             stat_box = self._create_stat_box(
                 parent=stats_container,
                 title=stat_name,
-                column=i,
+                row=i // 3,
+                column=i % 3,
             )
             self.stat_boxes.append(stat_box)
 
-    def _create_stat_box(self, parent, title, column):
+    def _create_stat_box(self, parent, title, row, column):
         """
         Create a single stat box frame.
         """
@@ -327,10 +338,11 @@ class ReviewPage(tk.Frame):
         )
 
         box_frame.grid(
-            row=0,
+            row=row,
             column=column,
             sticky="nsew",
             padx=(0 if column == 0 else 6, 0 if column == 2 else 6),
+            pady=(0 if row == 0 else 6, 0),
         )
 
         title_label = tk.Label(
@@ -366,6 +378,60 @@ class ReviewPage(tk.Frame):
             "title": title_label,
             "value": value_label,
         }
+
+    def _build_annotated_video_section(self, parent):
+        """
+        Build the annotated-video availability and open controls.
+        """
+
+        video_outer_frame = tk.Frame(
+            parent,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+        )
+
+        video_outer_frame.pack(
+            fill="x",
+            padx=30,
+            pady=(20, 12),
+        )
+
+        video_title = tk.Label(
+            video_outer_frame,
+            text="Annotated Video",
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_PRIMARY,
+        )
+
+        video_title.pack(
+            anchor="w",
+            pady=(0, 6),
+        )
+
+        self.annotated_video_status_label = tk.Label(
+            video_outer_frame,
+            text="No session selected.",
+            font=gui_config.DISPLAY_BODY_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_PRIMARY,
+        )
+
+        self.annotated_video_status_label.pack(
+            anchor="w",
+            pady=(0, 8),
+        )
+
+        self.open_annotated_video_button = self._make_action_button(
+            parent=video_outer_frame,
+            text="Open Annotated Video",
+            color=gui_config.PRIMARY_BUTTON_COLOR,
+            command=self._on_open_annotated_video_clicked,
+        )
+
+        self.open_annotated_video_button.config(state="disabled")
+        self.open_annotated_video_button.pack(
+            anchor="center",
+        )
 
     def _build_heatmap_section(self, parent):
         """
@@ -597,6 +663,7 @@ class ReviewPage(tk.Frame):
             self.current_session_data = session_data
 
             self._display_session_stats(session_data)
+            self._display_annotated_video(session_data)
             self._display_session_heatmap(session_data)
 
             self._set_status(
@@ -611,6 +678,37 @@ class ReviewPage(tk.Frame):
             )
 
             self._clear_display()
+
+    def _display_annotated_video(self, session_data):
+        """
+        Update the annotated-video button for the selected session.
+        """
+
+        annotated_video_path = (
+            self.review_controller.get_annotated_video_path_from_session(
+                session_data
+            )
+        )
+        self.current_annotated_video_path = annotated_video_path
+
+        if annotated_video_path is None:
+            self.annotated_video_status_label.config(
+                text="No annotated video is recorded for this session."
+            )
+            self.open_annotated_video_button.config(state="disabled")
+            return
+
+        if not annotated_video_path.is_file():
+            self.annotated_video_status_label.config(
+                text="The annotated video file could not be found."
+            )
+            self.open_annotated_video_button.config(state="disabled")
+            return
+
+        self.annotated_video_status_label.config(
+            text=annotated_video_path.name
+        )
+        self.open_annotated_video_button.config(state="normal")
 
     def _display_session_stats(self, session_data):
         """
@@ -642,6 +740,42 @@ class ReviewPage(tk.Frame):
             status_text = "Detected" if table_detected else "Not Detected"
             self.stat_boxes[2]["value"].config(
                 text=status_text,
+            )
+
+        # Update stat box 4: Average Return Speed
+        if len(self.stat_boxes) > 3:
+            average_speed = stats.get("average_return_speed_kmh")
+            average_speed_text = (
+                f"{average_speed:.2f} km/h"
+                if average_speed is not None
+                else "--"
+            )
+            self.stat_boxes[3]["value"].config(
+                text=average_speed_text,
+            )
+
+        # Update stat box 5: Fastest Return Speed
+        if len(self.stat_boxes) > 4:
+            fastest_speed = stats.get("fastest_return_speed_kmh")
+            fastest_speed_text = (
+                f"{fastest_speed:.2f} km/h"
+                if fastest_speed is not None
+                else "--"
+            )
+            self.stat_boxes[4]["value"].config(
+                text=fastest_speed_text,
+            )
+
+        # Update stat box 6: Shot Percentage
+        if len(self.stat_boxes) > 5:
+            shot_percentage = stats.get("shot_percentage")
+            shot_percentage_text = (
+                f"{shot_percentage:.1%}"
+                if shot_percentage is not None
+                else "--"
+            )
+            self.stat_boxes[5]["value"].config(
+                text=shot_percentage_text,
             )
 
     def _display_session_heatmap(self, session_data):
@@ -751,6 +885,12 @@ class ReviewPage(tk.Frame):
 
         self.preview_image = None
         self.current_session_data = None
+        self.current_annotated_video_path = None
+
+        self.annotated_video_status_label.config(
+            text="No session selected."
+        )
+        self.open_annotated_video_button.config(state="disabled")
 
     # --------------------------------------------------------
     # Button callbacks
@@ -771,6 +911,31 @@ class ReviewPage(tk.Frame):
         """
 
         self._load_session_dropdown()
+
+    def _on_open_annotated_video_clicked(self):
+        """
+        Open the selected session's annotated video in VLC.
+        """
+
+        try:
+            opened_path = self.review_controller.open_annotated_video(
+                self.current_annotated_video_path
+            )
+        except (FileNotFoundError, RuntimeError) as error:
+            self._set_status(
+                str(error),
+                gui_config.STATUS_FAILED_COLOR,
+            )
+            messagebox.showerror(
+                "Unable to Open Annotated Video",
+                str(error),
+            )
+            return
+
+        self._set_status(
+            f"Opened in VLC: {opened_path.name}",
+            gui_config.STATUS_COMPLETE_COLOR,
+        )
 
     # --------------------------------------------------------
     # Status helpers

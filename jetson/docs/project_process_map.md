@@ -57,10 +57,11 @@ flowchart LR
 
     EnrichedJSON --> Review
     Heatmap --> Review
-    Annotated -. future playback .-> Review
+    Annotated --> Review
 
     Review --> Metrics[Bounces, detection rate, and table status]
     Review --> Visual[Heatmap preview]
+    Review --> Playback[Open annotated video in VLC]
 ```
 
 The main information lifecycle is:
@@ -187,8 +188,13 @@ flowchart TD
     SampleIndices --> Seek[Seek to each frame]
     Seek --> TableModel[Run table keypoint model]
     TableModel --> Corners{At least four valid corners?}
+    TableModel --> NetPosts{At least one valid net post?}
     Corners -->|No| Reject[Reject sample]
     Corners -->|Yes| CornerSet[Store ordered corner set]
+    NetPosts -->|Yes| StableNet[Compute median net-post positions]
+    NetPosts -->|No| FractionFallback[Use configured height fraction]
+    StableNet --> LaunchBottom[Set launch bottom to average available net-post y]
+    FractionFallback --> LaunchBottom
 
     CornerSet --> Enough{Enough valid detections?}
     Enough -->|No| Fail[Fail or use available fallback]
@@ -197,11 +203,14 @@ flowchart TD
     Outliers --> Quality[Calculate corner-jitter report]
     Quality --> Matrix[Compute homography matrix]
     Matrix --> Output[Stable table transform and output size]
+    Output --> AnalysisInputs[Analysis table inputs]
+    LaunchBottom --> AnalysisInputs
 ```
 
 Homography maps image points onto a top-down table plane. It is appropriate for
 table contact locations, but it does not reconstruct the true 3D position of an
-airborne ball.
+airborne ball. Net posts do not change the homography; they define the shared
+tracking/annotation launch-region boundary.
 
 ---
 
@@ -211,19 +220,14 @@ airborne ball.
 flowchart TD
     Frame[Read next frame] --> Detect[Run ball/player model]
     Detect --> Candidates[Build ball candidates]
-    Candidates --> Track[Update active-ball tracker]
-    Track --> Position{Trusted active position?}
-
-    Position -->|No| AnnotateMissing[Annotate available state]
-    Position -->|Yes| Bounce[Process position through bounce detector]
-
-    Bounce --> Event{Bounce registered?}
+    Candidates --> Track[Update active, bounce, and challenger state in tracker order]
+    Track --> Event{New bounce registered?}
     Event -->|Yes| HeatmapState[Map/add bounce to heatmap state]
     Event -->|No| AnnotateFrame[Continue]
     HeatmapState --> AnnotateFrame
-    AnnotateMissing --> AnnotateFrame
 
-    AnnotateFrame --> Write[Write annotated video frame]
+    AnnotateFrame --> Debug[Draw candidates, challenger, active trail, bounce state, table, and frame info]
+    Debug --> Write[Write annotated video frame]
     Write --> Continue{More frames and below limit?}
     Continue -->|Yes| Frame
     Continue -->|No| Finalize[Release writer and generate final heatmap]
@@ -260,9 +264,9 @@ flowchart TD
     Switch --> Store
 ```
 
-Only trusted active positions are sent to the bounce detector. This boundary is
-important: `ball.py` decides which detection is the ball, while `bounce.py`
-interprets the motion of that chosen track.
+Ball selection and bounce detection now share the tracker state in `ball.py`.
+This intentionally preserves the original tracker order: update the active
+match, evaluate its bounce motion, then consider a challenger switch.
 
 ---
 
@@ -270,27 +274,39 @@ interprets the motion of that chosen track.
 
 ```mermaid
 flowchart TD
-    Position[New trusted active-ball position] --> Cooldown[Decrease bounce cooldown]
-    Cooldown --> Ignore{Inside ignored launch region?}
-    Ignore -->|Yes| Remember[Remember current vy and stop]
-    Ignore -->|No| Mature{Enough track updates?}
-    Mature -->|No| Remember
-    Mature -->|Yes| Down{Current vy above downward threshold?}
-
-    Down -->|Yes| Arm[Arm detector]
-    Arm --> Lowest[Update lowest pending contact point]
-    Down -->|No| ConfirmCheck
-    Lowest --> ConfirmCheck{Armed, cooldown zero, previous vy down, current vy up?}
-
-    ConfirmCheck -->|No| Remember
-    ConfirmCheck -->|Yes| Register[Register bounce event]
-    Register --> Save[Save frame, time, image point, previous vy, and current vy]
-    Save --> StartCooldown[Start cooldown and clear pending candidate]
+    Frame[Every video frame] --> Cooldown[Decrease bounce cooldown]
+    Cooldown --> Active{Active track exists?}
+    Active -->|No| Initialize[Score motion and confidence; launch region adds bonus]
+    Active -->|Yes| Match[Match candidate to predicted active position]
+    Match --> Matched{Valid match?}
+    Matched -->|Yes| Update[Update floating center and bbox]
+    Update --> History[Append bbox-bottom to nine-position history]
+    History --> Smooth[Apply three-point moving median]
+    Smooth --> Incoming[Fit incoming slope over 3–4 points]
+    Incoming --> Arm{Descending above threshold and outside launch region?}
+    Arm -->|Yes| Contact[Arm and retain contact plateau]
+    Arm -->|No| Confirm
+    Contact --> Confirm{Outgoing 2–3 point slope is upward; mature; cooldown zero?}
+    Confirm -->|Yes| Register[Register one bounce for this active track]
+    Confirm -->|No| Challenger
+    Register --> Challenger[Score pending challenger]
+    Matched -->|No| Miss[Increase miss count]
+    Miss --> Challenger
+    Challenger --> Switch{Confirmed launch-region challenger?}
+    Switch -->|Yes| ResetSwitch[Switch track and reset trail/pending bounce]
+    Switch -->|No| Drop{Too many misses?}
+    Drop -->|Yes| ResetDrop[Drop track and reset pending bounce]
+    Drop -->|No| Store[Store candidates for next frame]
+    ResetSwitch --> Store
+    ResetDrop --> Store
 ```
 
-This detector uses an instantaneous consecutive-frame vertical-velocity
-reversal. The planned temporal and perspective-aware improvements are documented
-in [Bounce Detection Improvement Plan](bounce_detection_improvement_plan.md).
+This detector uses a smoothed temporal bbox-bottom reversal and permits one
+bounce per active track. Flat shallow-contact frames are retained in a contact
+plateau rather than erasing the incoming trend. `bounce.py` adapts newly
+registered points for heatmap and JSON consumers. Further confidence and
+perspective-aware improvements are documented in
+[Bounce Detection Improvement Plan](bounce_detection_improvement_plan.md).
 
 ---
 

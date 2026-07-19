@@ -84,11 +84,11 @@ use safe defaults when a field is absent.
 | `homography` | Analysis | Heatmap, Review/future diagnostics | Failure placeholder |
 | `bounces` | Analysis | Review, heatmap/reporting | Empty list |
 | `ball_tracking` | Analysis | Review | Empty summary/history |
-| `summary` | Analysis | Review | Zero counts |
+| `summary` | Analysis | Review | Zero counts; no processing duration |
 | `quality_flags` | Analysis | Review/future diagnostics | Conservative placeholders |
 | `heatmap` | Analysis | Review | `null` |
 | `analysis_models` | Analysis | Reproducibility/reporting | Empty object |
-| `artifacts` | Analysis | Review/future playback | Annotated path is `null` |
+| `artifacts` | Analysis | Review/VLC playback | Annotated path is `null` |
 
 ---
 
@@ -227,13 +227,16 @@ If homography fails, matrix/point fields are `null` and
 [
   {
     "bounce_id": 1,
-    "frame_index": 331,
-    "time_seconds": 5.5167,
-    "image_position": {"x": 674.74, "y": 400.10},
+    "frame_index": 332,
+    "time_seconds": 5.5333,
+    "image_position": {"x": 674, "y": 400},
     "active_position_frame_index": 332,
     "active_position_time_seconds": 5.5333,
     "previous_vy": 1916.03,
-    "current_vy": -147.24
+    "current_vy": -147.24,
+    "estimated_speed_kmh": 28.75,
+    "speed_sample_count": 5,
+    "speed_method": "pre_bounce_table_plane"
   }
 ]
 ```
@@ -241,10 +244,17 @@ If homography fails, matrix/point fields are `null` and
 | Field | Meaning |
 | --- | --- |
 | `bounce_id` | One-based ID within the session. |
-| `frame_index` / `time_seconds` | Estimated contact frame and time. |
-| `image_position` | Estimated image-space contact point. |
-| `active_position_*` | Frame/time at which the reversal was confirmed. |
+| `frame_index` / `time_seconds` | Frame/time at which tracker.py confirmed the reversal. |
+| `image_position` | Lowest stored bbox-bottom point from the preceding descent. |
+| `active_position_*` | Compatibility copy of the confirmation frame/time. |
 | `previous_vy` / `current_vy` | Image-space velocities used by the current detector. |
+| `estimated_speed_kmh` | Optional incoming 2D table-plane speed estimate. |
+| `speed_sample_count` | Number of valid pre-bounce segment speeds used. |
+| `speed_method` | Estimation method identifier; currently `pre_bounce_table_plane`. |
+
+Speed fields are omitted when homography or sufficient valid incoming samples
+are unavailable. They are estimates from a single camera, not full 3D radar
+measurements.
 
 Future temporal bounce detection may add confidence, rejection diagnostics,
 smoothed velocities, direction-change score, and mapped table positions. Schema
@@ -282,7 +292,11 @@ is persisted; this is not currently the complete trajectory.
 ```json
 {
   "summary": {
-    "total_bounces": 1
+    "total_bounces": 1,
+    "average_return_speed_kmh": 28.75,
+    "fastest_return_speed_kmh": 28.75,
+    "speed_bounces_measured": 1,
+    "analysis_processing_time_seconds": 23.45
   },
   "quality_flags": {
     "table_detection_failed": false,
@@ -291,6 +305,15 @@ is persisted; this is not currently the complete trajectory.
   }
 }
 ```
+
+`analysis_processing_time_seconds` is an optional numeric duration measured with
+a monotonic clock. It covers `run_analysis()` from pipeline entry through output
+generation and video cleanup. Historical or Training-only session files may omit
+the field. The GUI formats an available value to two decimal places.
+
+The average and fastest return speeds summarize only bounces that received a
+valid estimate. `speed_bounces_measured` reports that denominator. Historical
+sessions may omit all three fields until their recordings are analyzed again.
 
 Quality flags describe pipeline outcomes, not guaranteed physical accuracy. For
 example, `no_bounces_detected=false` means at least one event was registered; it
@@ -347,7 +370,8 @@ This section makes the analysis reproducible. A future mixed selection can use:
 ```
 
 The path is `null` when annotation is disabled or the writer could not be
-created. Annotated-video playback is not yet exposed in Review.
+created. Review enables its **Open Annotated Video** button when the file can be
+resolved locally, and opens the video using VLC.
 
 The heatmap currently remains in its own top-level section rather than inside
 `artifacts`.
@@ -366,10 +390,12 @@ flowchart TD
     Video --> Table[Update table and quality flag]
     Table --> Homography[Update homography and quality flag]
     Homography --> Ball[Replace ball summary and recent state]
-    Ball --> Bounces[Replace bounce events]
-    Bounces --> Heatmap[Replace heatmap when available]
+    Ball --> Bounces[Replace bounce events and per-bounce speeds]
+    Bounces --> SpeedSummary[Store average and fastest speeds]
+    SpeedSummary --> Heatmap[Replace heatmap when available]
     Heatmap --> Summary[Recalculate total_bounces and no-bounce flag]
-    Summary --> Save[Write JSON-safe result]
+    Summary --> Timing[Store analysis processing time]
+    Timing --> Save[Write JSON-safe result]
 ```
 
 NumPy arrays and other non-native values are converted to JSON-safe lists or

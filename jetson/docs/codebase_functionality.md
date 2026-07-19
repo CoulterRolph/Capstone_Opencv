@@ -83,7 +83,7 @@ Controllers connect GUI actions to functional modules.
 | --- | --- |
 | `training_controller.py` | Validates settings, manages training state, coordinates preview/recording/serial, and creates initial session JSON. |
 | `training_controller_config.py` | Training limits, state names, serial/recording toggles, STM32 response keywords, and status messages. |
-| `analysis_controller.py` | Lists recordings/model versions, captures the selection, runs analysis in a thread, and merges results into session JSON. |
+| `analysis_controller.py` | Lists recordings/model versions, reads prior analysis summaries, runs analysis in a thread, forwards structured progress, and merges results into session JSON. |
 | `analysis_controller_config.py` | Recording folder, valid video extensions, thread toggle, and analysis status messages. |
 | `review_controller.py` | Lists and loads `_session.json` files, extracts metrics, and resolves heatmap paths. |
 | `review_controller_config.py` | Legacy/general Review output configuration; session discovery uses the recordings directory. |
@@ -127,18 +127,18 @@ Analysis code owns computer vision and output generation.
 
 | File | What it does |
 | --- | --- |
-| `analysis.py` | Main analysis pipeline. Opens video, computes table homography, runs ball/bounce tracking, and creates review outputs. |
+| `analysis.py` | Main analysis pipeline. Opens video, computes table homography, runs ball/bounce tracking, emits optional progress events, and creates review outputs. |
 | `analysis_config.py` | Paths, model settings, thresholds, frame limits, table dimensions, heatmap settings, annotation settings, and JSON settings. |
 | `model_selection.py` | Version discovery, validation, table/ball path resolution, and output-tag generation. |
 | `video_checker.py` | Video existence/open/readability checks and metadata extraction. |
-| `table.py` | Loads the configured versioned table model, detects table keypoints, and builds table objects. |
+| `table.py` | Detects table corners and optional net posts, then stabilizes net positions for the launch boundary. |
 | `homography.py` | Builds sample frame indices, validates table corners, computes stable homography, maps image points to table space. |
-| `ball.py` | Loads the configured versioned ball/player model, detects candidates, and tracks the active ball. |
-| `bounce.py` | Detects bounce events from active-ball vertical motion and cooldown logic. |
-| `annotate.py` | Draws analysis overlays and writes annotated videos. |
+| `ball.py` | Loads the configured versioned ball/player model and runs tracker-compatible candidate, active-ball, challenger, and bounce state. |
+| `bounce.py` | Adapts tracker-owned bounce points for output/reporting compatibility. |
+| `annotate.py` | Draws candidates, challengers, active tracking, bounce diagnostics, existing table/frame overlays, and annotated videos. |
 | `heatmap.py` | Maps bounce events into table coordinates and draws heatmap images/overlays. |
 | `log_json.py` | Builds JSON-safe logs and loads, merges, and saves Training + Analysis session JSON. |
-| `archived/` | Older analysis implementations kept for reference. |
+| `archived/` | Reference-only former implementations documented in `analysis/archived/README.md`. |
 
 Current primary metrics:
 
@@ -157,7 +157,7 @@ Prepared but not fully surfaced:
 ```text
 - Player-specific metrics
 - Accepted/rejected bounce diagnostics
-- Annotated-video playback in Review
+- Embedded annotated-video playback in Review (external VLC opening is available)
 ```
 
 ---
@@ -277,6 +277,10 @@ analysis/
 comm/
 ```
 
+The former separate bounce detector is
+`analysis/archived/bounce_separate_state.py`. It was replaced when bounce state
+moved into `analysis/ball.py` to reproduce the original tracker update order.
+
 ---
 
 ## Where To Change Things
@@ -292,7 +296,8 @@ comm/
 | Change table detection behavior | `analysis/table.py` |
 | Change homography behavior | `analysis/homography.py` |
 | Change ball tracking behavior | `analysis/ball.py` |
-| Change bounce detection thresholds | `analysis/analysis_config.py`, `analysis/bounce.py` |
+| Change bounce detection thresholds or tracker order | `analysis/analysis_config.py`, `analysis/ball.py` |
+| Find the replaced separate bounce algorithm | `analysis/archived/README.md`, `analysis/archived/bounce_separate_state.py` |
 | Change heatmap appearance | `analysis/heatmap.py`, `analysis/analysis_config.py` |
 | Change session JSON structure or merge | `controller/training_controller.py`, `analysis/log_json.py`, `controller/analysis_controller.py` |
 | Change Review session loading | `controller/review_controller.py`, `gui/review_page.py` |

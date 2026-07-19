@@ -24,7 +24,7 @@ Later integration steps:
 
 import os
 import sys
-from collections import deque
+import time
 from pathlib import Path
 
 
@@ -94,6 +94,7 @@ ANNOTATION_DRAW_LAUNCH_REGION = analysis_config.ANNOTATION_DRAW_LAUNCH_REGION
 BALL_LAUNCH_X_MIN_FRAC = analysis_config.BALL_LAUNCH_X_MIN_FRAC
 BALL_LAUNCH_X_MAX_FRAC = analysis_config.BALL_LAUNCH_X_MAX_FRAC
 BALL_LAUNCH_Y_MAX_FRAC = analysis_config.BALL_LAUNCH_Y_MAX_FRAC
+BALL_SWITCH_CONFIRM_FRAMES = analysis_config.BALL_SWITCH_CONFIRM_FRAMES
 
 HEATMAP_ENABLED = getattr(
     analysis_config,
@@ -181,6 +182,7 @@ from video_checker import (
 from table import (
     load_table_model,
     detect_table_from_video,
+    apply_median_net_positions,
     print_table_object_keypoints,
 )
 
@@ -204,10 +206,15 @@ from ball import (
 
 from bounce import (
     create_bounce_state,
-    process_active_ball_position,
+    sync_bounce_state_from_tracker,
     print_bounce_event,
     print_bounce_summary,
     get_bounce_summary,
+)
+
+from speed import (
+    attach_speed_estimate,
+    summarize_bounce_speeds,
 )
 
 from annotate import (
@@ -215,7 +222,6 @@ from annotate import (
     create_annotated_video_writer,
     release_annotated_video_writer,
     annotate_frame,
-    update_ball_trail,
 )
 
 from model_selection import (
@@ -337,17 +343,52 @@ def release_annotation_writer_if_needed(annotated_video_writer, annotated_video_
     print()
 
 
-def build_launch_region_annotation(video_info):
-    """Build the displayed launch box from the ball-tracking configuration."""
+def get_launch_region_bottom_from_table(detected_table, frame_height):
+    """Return the average detected net-post y, or None when unavailable."""
+
+    if detected_table is None or not hasattr(detected_table, "net_position"):
+        return None
+
+    valid_net_y_values = []
+
+    for net_point in detected_table.net_position:
+        x = float(net_point.x)
+        y = float(net_point.y)
+
+        if x == 0.0 and y == 0.0:
+            continue
+
+        if 0.0 < y < float(frame_height):
+            valid_net_y_values.append(y)
+
+    if not valid_net_y_values:
+        return None
+
+    return int(round(sum(valid_net_y_values) / len(valid_net_y_values)))
+
+
+def build_launch_region_annotation(video_info, detected_table=None):
+    """Build one launch box shared by tracking and video annotation."""
 
     frame_width = int(video_info["width"])
     frame_height = int(video_info["height"])
+    net_bottom_y = get_launch_region_bottom_from_table(
+        detected_table=detected_table,
+        frame_height=frame_height,
+    )
+
+    if net_bottom_y is None:
+        net_bottom_y = int(frame_height * BALL_LAUNCH_Y_MAX_FRAC)
+        boundary_source = "configured_fraction_fallback"
+    else:
+        boundary_source = "table_net_posts"
 
     return {
         "x1": int(frame_width * BALL_LAUNCH_X_MIN_FRAC),
         "y1": 0,
         "x2": int(frame_width * BALL_LAUNCH_X_MAX_FRAC),
-        "y2": int(frame_height * BALL_LAUNCH_Y_MAX_FRAC),
+        "y2": net_bottom_y,
+        "boundary_source": boundary_source,
     }
 
 
@@ -361,6 +402,11 @@ def write_annotated_frame_if_enabled(
     ball_trail,
     bounce_events,
     launch_region=None,
+    ball_candidates=None,
+    pending_challenger=None,
+    pending_challenger_count=0,
+    bounce_armed=False,
+    bounce_cooldown=0,
     heatmap_state=None,
     homography_output_size=None,
 ):
@@ -386,6 +432,12 @@ def write_annotated_frame_if_enabled(
         ball_trail=ball_trail,
         bounce_events=bounce_events,
         launch_region=launch_region,
+        ball_candidates=ball_candidates,
+        pending_challenger=pending_challenger,
+        pending_challenger_count=pending_challenger_count,
+        challenger_confirm_frames=BALL_SWITCH_CONFIRM_FRAMES,
+        bounce_armed=bounce_armed,
+        bounce_cooldown=bounce_cooldown,
         draw_frame_info_enabled=ANNOTATION_DRAW_FRAME_INFO,
         draw_table=ANNOTATION_DRAW_TABLE,
         draw_ball=ANNOTATION_DRAW_BALL,
@@ -461,6 +513,9 @@ def build_active_ball_annotation_data(ball_detection):
     active_ball_data = {
         "center": center,
         "confidence": confidence,
+        "velocity": ball_detection.get("velocity", {}),
+        "motion_estimate": ball_detection.get("motion_estimate", 0.0),
+        "in_launch_region": ball_detection.get("in_launch_region", False),
     }
 
     if box is not None:
@@ -930,7 +985,36 @@ def detect_table_samples_for_homography(video_capture):
     return detected_tables
 
 
-def compute_integrated_stable_homography(video_capture):
+def emit_analysis_progress(
+    progress_callback,
+    stage,
+    percent,
+    message,
+    **details,
+):
+    """Send one structured progress event without making analysis depend on it."""
+
+    if progress_callback is None:
+        return
+
+    progress_event = {
+        "stage": str(stage),
+        "percent": max(0, min(100, int(percent))),
+        "message": str(message),
+        **details,
+    }
+
+    try:
+        progress_callback(progress_event)
+    except Exception as error:
+        # GUI progress is helpful, but it must never make the CV pipeline fail.
+        print(f"Progress callback failed: {error}", flush=True)
+
+
+def compute_integrated_stable_homography(
+    video_capture,
+    progress_callback=None,
+):
     """
     Compute the homography using multiple table detections.
 
@@ -948,7 +1032,19 @@ def compute_integrated_stable_homography(video_capture):
             "No valid table detections found. Cannot compute homography."
         )
 
+    emit_analysis_progress(
+        progress_callback=progress_callback,
+        stage="table_detected",
+        percent=25,
+        message="Table detected.",
+        table_detection_count=len(detected_tables),
+    )
+
     detected_table_for_annotation = detected_tables[0]
+    apply_median_net_positions(
+        detected_table=detected_table_for_annotation,
+        detected_tables=detected_tables,
+    )
 
     try:
         homography_result = compute_stable_table_homography(
@@ -972,6 +1068,13 @@ def compute_integrated_stable_homography(video_capture):
         homography_result,
     )
 
+    emit_analysis_progress(
+        progress_callback=progress_callback,
+        stage="homography_complete",
+        percent=35,
+        message="Homography calculated.",
+    )
+
     return detected_table_for_annotation, homography_result
 
 
@@ -983,6 +1086,7 @@ def run_analysis(
     video_path=None,
     table_model_version=None,
     ball_model_version=None,
+    progress_callback=None,
 ):
     """
     Run the current analysis pipeline.
@@ -1005,11 +1109,17 @@ def run_analysis(
         ball_model_version:
             Optional ball-model folder version. Defaults to the table version.
 
+        progress_callback:
+            Optional callable that receives structured progress dictionaries.
+            GUI callers use this to update progress without parsing terminal text.
+
     Returns:
         analysis_result:
             Dictionary containing video info, table info, homography info,
             ball tracking summary, bounce tracking summary, and optional heatmap.
     """
+
+    analysis_start_time = time.perf_counter()
 
     selected_video_path = resolve_video_path(
         video_path=video_path,
@@ -1032,6 +1142,14 @@ def run_analysis(
         selection=model_selection,
     )
 
+    emit_analysis_progress(
+        progress_callback=progress_callback,
+        stage="started",
+        percent=5,
+        message="Analysis started.",
+        video_name=selected_video_path.name,
+    )
+
     print()
     print("===========================================", flush=True)
     print(" Starting Analysis", flush=True)
@@ -1043,6 +1161,7 @@ def run_analysis(
     print(f"Ball model path: {model_paths['ball']}", flush=True)
 
     video_capture = None
+    analysis_result = None
 
     try:
         # ------------------------------------------------------------
@@ -1050,6 +1169,14 @@ def run_analysis(
         # ------------------------------------------------------------
 
         video_capture, video_info = open_and_check_video(selected_video_path)
+
+        emit_analysis_progress(
+            progress_callback=progress_callback,
+            stage="video_validated",
+            percent=10,
+            message="Video opened and validated.",
+            total_frames=int(video_info.get("frame_count", 0) or 0),
+        )
 
         # ------------------------------------------------------------
         # Step 2: Detect stable table homography
@@ -1060,12 +1187,20 @@ def run_analysis(
         print(" Detecting Stable Table Homography")
         print("===========================================")
 
+        emit_analysis_progress(
+            progress_callback=progress_callback,
+            stage="table_detection",
+            percent=15,
+            message="Detecting table.",
+        )
+
         load_table_model(
             model_path=model_paths["table"],
         )
 
         detected_table, homography_result = compute_integrated_stable_homography(
             video_capture,
+            progress_callback=progress_callback,
         )
 
         print_table_object_keypoints(
@@ -1103,6 +1238,7 @@ def run_analysis(
             max_frames=BALL_ANALYSIS_MAX_FRAMES,
             ball_model_path=model_paths["ball"],
             model_version_tag=model_selection.output_tag,
+            progress_callback=progress_callback,
         )
 
         # ------------------------------------------------------------
@@ -1131,6 +1267,13 @@ def run_analysis(
             },
         }
 
+        emit_analysis_progress(
+            progress_callback=progress_callback,
+            stage="results_packaged",
+            percent=97,
+            message="Analysis results prepared.",
+        )
+
         print()
         print("===========================================", flush=True)
         print(" Analysis Stage Complete", flush=True)
@@ -1148,18 +1291,32 @@ def run_analysis(
         print("===========================================", flush=True)
         print()
 
-        return analysis_result
-
     finally:
         if video_capture is not None:
             video_capture.release()
             print("Video released safely.", flush=True)
+
+        analysis_elapsed_time = time.perf_counter() - analysis_start_time
+        analysis_processing_time_seconds = round(analysis_elapsed_time, 2)
+
+        if isinstance(analysis_result, dict):
+            analysis_result["analysis_processing_time_seconds"] = (
+                analysis_processing_time_seconds
+            )
+
+        print(
+            "Total analysis processing time: "
+            f"{analysis_processing_time_seconds:.2f} seconds",
+            flush=True,
+        )
 
         try:
             import cv2 as cv
             cv.destroyAllWindows()
         except Exception:
             pass
+
+    return analysis_result
 
 
 # ============================================================
@@ -1175,6 +1332,7 @@ def process_ball_and_bounce_tracking_for_video(
     max_frames=None,
     ball_model_path=None,
     model_version_tag=None,
+    progress_callback=None,
 ):
     """
     Process video frames, track the active ball, detect bounces,
@@ -1223,6 +1381,23 @@ def process_ball_and_bounce_tracking_for_video(
         model_path=ball_model_path,
     )
 
+    total_frames = int(video_info.get("frame_count", 0) or 0)
+    if max_frames is not None:
+        if total_frames > 0:
+            total_frames = min(total_frames, int(max_frames))
+        else:
+            total_frames = int(max_frames)
+
+    emit_analysis_progress(
+        progress_callback=progress_callback,
+        stage="frame_analysis",
+        percent=40,
+        message="Ball tracking and bounce detection started.",
+        frames_analyzed=0,
+        total_frames=total_frames,
+        bounce_count=0,
+    )
+
     tracker_state = create_ball_tracker_state()
     bounce_state = create_bounce_state()
 
@@ -1231,7 +1406,9 @@ def process_ball_and_bounce_tracking_for_video(
     frame_index = 0
     frames_analyzed = 0
 
-    ball_trail = deque(maxlen=30)
+    last_progress_percent = 40
+
+    ball_trail = []
 
     heatmap_state = setup_heatmap_state_if_needed()
 
@@ -1245,7 +1422,17 @@ def process_ball_and_bounce_tracking_for_video(
         model_version_tag=model_version_tag,
     )
 
-    launch_region = build_launch_region_annotation(video_info)
+    launch_region = build_launch_region_annotation(
+        video_info=video_info,
+        detected_table=detected_table,
+    )
+
+    print(
+        "Launch region bottom: "
+        f"y={launch_region['y2']} "
+        f"({launch_region['boundary_source']})",
+        flush=True,
+    )
 
     try:
         while True:
@@ -1273,6 +1460,8 @@ def process_ball_and_bounce_tracking_for_video(
                 time_seconds=time_seconds,
                 tracker_state=tracker_state,
                 model=ball_model,
+                delta_time=1.0 / fps,
+                launch_region=launch_region,
             )
 
             frames_analyzed += 1
@@ -1281,8 +1470,8 @@ def process_ball_and_bounce_tracking_for_video(
             # Bounce detection
             # ------------------------------------------------------------
             #
-            # ball.py only appends a new active position when the active track
-            # updates. bounce.py should only process those real active-ball updates.
+            # ball.py already ran tracker-owned temporal bounce logic during
+            # its per-frame update. bounce.py only adapts new points for output.
 
             bounce_event = process_latest_active_position_for_bounce(
                 tracker_state=tracker_state,
@@ -1291,6 +1480,11 @@ def process_ball_and_bounce_tracking_for_video(
             )
 
             if bounce_event is not None:
+                attach_speed_estimate(
+                    bounce_event=bounce_event,
+                    positions=tracker_state["positions"],
+                    homography_result=homography_result,
+                )
                 print_bounce_event(bounce_event)
 
                 add_bounce_to_heatmap_state_if_needed(
@@ -1298,6 +1492,34 @@ def process_ball_and_bounce_tracking_for_video(
                     bounce_event=bounce_event,
                     homography_result=homography_result,
                 )
+
+            if total_frames > 0:
+                frame_fraction = min(1.0, frames_analyzed / total_frames)
+                progress_percent = 40 + int(frame_fraction * 55)
+            else:
+                progress_percent = 40
+
+            should_report_progress = (
+                progress_percent != last_progress_percent
+                or bounce_event is not None
+                or (
+                    total_frames <= 0
+                    and BALL_ANALYSIS_PROGRESS_INTERVAL > 0
+                    and frames_analyzed % BALL_ANALYSIS_PROGRESS_INTERVAL == 0
+                )
+            )
+
+            if should_report_progress:
+                emit_analysis_progress(
+                    progress_callback=progress_callback,
+                    stage="frame_analysis",
+                    percent=progress_percent,
+                    message="Analyzing frames and detecting bounces.",
+                    frames_analyzed=frames_analyzed,
+                    total_frames=total_frames,
+                    bounce_count=bounce_state["total_bounces"],
+                )
+                last_progress_percent = progress_percent
 
             # ------------------------------------------------------------
             # Annotation / heatmap video overlay
@@ -1309,11 +1531,8 @@ def process_ball_and_bounce_tracking_for_video(
 
             active_ball_data = build_active_ball_annotation_data(ball_detection)
 
-            ball_trail = update_ball_trail(
-                ball_trail=ball_trail,
-                ball_data=active_ball_data,
-                max_trail_length=30,
-            )
+            # Use the tracker-owned trail so switches/resets match tracker.py.
+            ball_trail = tracker_state["active_trail"]
 
             annotation_bounce_events = normalize_bounce_events_for_annotation(
                 bounce_state["bounce_events"],
@@ -1329,6 +1548,13 @@ def process_ball_and_bounce_tracking_for_video(
                 ball_trail=ball_trail,
                 bounce_events=annotation_bounce_events,
                 launch_region=launch_region,
+                ball_candidates=tracker_state["candidates"],
+                pending_challenger=tracker_state["display_challenger"],
+                pending_challenger_count=tracker_state[
+                    "pending_challenger_count"
+                ],
+                bounce_armed=tracker_state["bounce_armed"],
+                bounce_cooldown=tracker_state["bounce_cooldown"],
                 heatmap_state=heatmap_state,
                 homography_output_size=heatmap_overlay_output_size,
             )
@@ -1360,11 +1586,24 @@ def process_ball_and_bounce_tracking_for_video(
 
     ball_tracking_summary = get_ball_tracking_summary(tracker_state)
     bounce_tracking_summary = get_bounce_summary(bounce_state)
+    bounce_tracking_summary.update(
+        summarize_bounce_speeds(bounce_state["bounce_events"])
+    )
 
     heatmap_result = generate_heatmap_image_if_enabled(
         video_path=video_path,
         bounce_events=bounce_state["bounce_events"],
         homography_result=homography_result,
+    )
+
+    emit_analysis_progress(
+        progress_callback=progress_callback,
+        stage="artifacts_complete",
+        percent=96,
+        message="Frame analysis and output generation complete.",
+        frames_analyzed=frames_analyzed,
+        total_frames=total_frames,
+        bounce_count=bounce_state["total_bounces"],
     )
 
     ball_tracking_result = {
@@ -1392,10 +1631,10 @@ def process_latest_active_position_for_bounce(
     bounce_state,
 ):
     """
-    Send the latest active-ball position into bounce.py.
+    Synchronize the bounce adapter with tracker-owned bounce state.
 
-    bounce.py should only process a new active-ball position when ball.py
-    actually updated the active track.
+    The original tracker performs bounce detection inside its per-frame update.
+    This function only exposes a newly registered point to existing output code.
 
     Args:
         tracker_state:
@@ -1412,23 +1651,10 @@ def process_latest_active_position_for_bounce(
         Otherwise None.
     """
 
-    if ball_detection is None:
-        return None
-
-    if not ball_detection.get("ball_detected", False):
-        return None
-
-    if not ball_detection.get("track_updated", False):
-        return None
-
-    if len(tracker_state["positions"]) == 0:
-        return None
-
-    latest_active_position = tracker_state["positions"][-1]
-
-    bounce_event = process_active_ball_position(
-        active_position=latest_active_position,
+    bounce_event = sync_bounce_state_from_tracker(
+        tracker_state=tracker_state,
         bounce_state=bounce_state,
+        ball_detection=ball_detection,
     )
 
     return bounce_event

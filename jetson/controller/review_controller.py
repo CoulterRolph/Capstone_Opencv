@@ -156,17 +156,60 @@ class ReviewController:
         if session_data is None:
             return {}
 
+        summary = session_data.get("summary", {})
+        training_settings = session_data.get("training_settings", {})
+
+        total_bounces = summary.get("total_bounces", 0)
+        try:
+            total_bounces = int(total_bounces)
+        except (TypeError, ValueError):
+            total_bounces = 0
+
+        number_of_shots = training_settings.get("number_of_shots")
+        try:
+            number_of_shots = int(number_of_shots)
+        except (TypeError, ValueError):
+            number_of_shots = None
+
+        if number_of_shots is not None and number_of_shots > 0:
+            shot_percentage = total_bounces / number_of_shots
+        else:
+            shot_percentage = None
+
         stats = {
             "session_name": session_data.get("session", {}).get("session_name", "Unknown"),
             "recording_time": session_data.get("session", {}).get("recording_time", "Unknown"),
-            "total_bounces": session_data.get("summary", {}).get("total_bounces", 0),
+            "total_bounces": total_bounces,
             "table_detected": session_data.get("table", {}).get("table_detected", False),
             "homography_found": session_data.get("homography", {}).get("homography_found", False),
             "ball_frames": session_data.get("ball_tracking", {}).get("summary", {}).get("frames_with_ball", 0),
             "detection_rate": session_data.get("ball_tracking", {}).get("summary", {}).get("detection_rate", 0.0),
+            "average_return_speed_kmh": self._get_optional_float(
+                summary.get("average_return_speed_kmh")
+            ),
+            "fastest_return_speed_kmh": self._get_optional_float(
+                summary.get("fastest_return_speed_kmh")
+            ),
+            "shot_percentage": shot_percentage,
         }
 
         return stats
+
+    def _get_optional_float(self, value):
+        """Return a finite non-negative float, or None for unavailable data."""
+
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        if value < 0 or value == float("inf") or value == float("-inf"):
+            return None
+
+        if value != value:
+            return None
+
+        return value
 
     def get_heatmap_path_from_session(self, session_data):
         """
@@ -190,6 +233,95 @@ class ReviewController:
             return None
 
         return Path(heatmap_image_path)
+
+    def get_annotated_video_path_from_session(self, session_data):
+        """
+        Return the annotated-video path recorded for a session.
+
+        Analysis may run inside a container and save an absolute ``/workspace``
+        path in JSON. If that path is unavailable on the current machine, use
+        the video's filename in the configured local annotated-video folder.
+        """
+
+        if session_data is None:
+            return None
+
+        artifacts = session_data.get("artifacts")
+        if not isinstance(artifacts, dict):
+            return None
+
+        saved_path_value = artifacts.get("annotated_video_path")
+        if not saved_path_value:
+            return None
+
+        saved_path = Path(saved_path_value)
+
+        if saved_path.is_file():
+            return saved_path
+
+        if not saved_path.is_absolute():
+            project_relative_path = PROJECT_ROOT / saved_path
+            if project_relative_path.is_file():
+                return project_relative_path
+
+        # This also provides a useful expected path for a missing-file error.
+        return review_controller_config.ANNOTATED_DIR / saved_path.name
+
+    def open_annotated_video(self, annotated_video_path):
+        """
+        Launch an existing annotated video using VLC only.
+
+        Raises:
+            FileNotFoundError: If the annotated video does not exist.
+            RuntimeError: If VLC is unavailable or cannot be launched.
+        """
+
+        if annotated_video_path is None:
+            raise FileNotFoundError(
+                "No annotated video is recorded for this session."
+            )
+
+        annotated_video_path = Path(annotated_video_path)
+
+        if not annotated_video_path.is_file():
+            raise FileNotFoundError(
+                f"Annotated video does not exist: {annotated_video_path}"
+            )
+
+        vlc_path = self._find_vlc_executable()
+        if vlc_path is None:
+            configured_paths = ", ".join(
+                str(path)
+                for path in review_controller_config.VLC_EXECUTABLE_PATHS
+            )
+            raise RuntimeError(
+                "VLC could not be found. Checked PATH and: "
+                f"{configured_paths}"
+            )
+
+        try:
+            subprocess.Popen(
+                [vlc_path, str(annotated_video_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as error:
+            raise RuntimeError(f"VLC could not be opened: {error}") from error
+
+        self.last_opened_file_path = annotated_video_path
+        return annotated_video_path
+
+    def _find_vlc_executable(self):
+        """
+        Find VLC even when the GUI process has a restricted PATH.
+        """
+
+        for configured_path in review_controller_config.VLC_EXECUTABLE_PATHS:
+            configured_path = Path(configured_path)
+            if configured_path.is_file():
+                return str(configured_path)
+
+        return shutil.which("vlc")
 
 
 # ============================================================

@@ -67,12 +67,14 @@ Current working features:
   * Select a recording video
   * Start analysis from the GUI
   * Run analysis in a background thread
+  * Show milestone, frame, bounce-count, and processing-time progress
+  * Show saved progress and model version for previously analyzed recordings
   * Display status and log messages
 * Review page can:
 
-  * List saved heatmap PNG files
-  * Select a heatmap
-  * Preview the heatmap inside Tkinter
+  * List saved `_session.json` records
+  * Display JSON-backed bounce, ball-detection, and table-status metrics
+  * Preview the heatmap linked by the selected session
 * Computer vision analysis pipeline can:
 
   * Open and validate a recorded video
@@ -84,7 +86,7 @@ Current working features:
   * Generate a bounce heatmap
 * STM32 serial command path can:
 
-  * Build `SETTING`, `START`, and `STOP` commands
+  * Build `SETTINGS`, `START`, and `STOP` commands
   * Send real serial commands through the Training Controller
   * Log command payloads and bytes written
 * Recording strategy has been selected:
@@ -94,15 +96,19 @@ Current working features:
   * GStreamer recording
   * Offline OpenCV analysis
 
-Planned but not fully connected yet:
+Connected but still requiring Jetson/hardware validation:
 
-* Real Training page recording integration.
-* Low-FPS camera preview.
+* Real Training page preview and recording integration.
+* Outgoing STM32 `SETTINGS`, `START`, and `STOP` commands.
+* Initial session JSON creation and Analysis result merge.
+* JSON-backed Review statistics and heatmap preview.
+
+Not connected yet:
+
 * Table detection overlay during preview.
-* STM32 response listener.
-* Automatic `COMPLETE` detection from STM32.
-* Richer JSON result export.
-* Review page statistics and feedback summary.
+* Continuous STM32 response listener and automatic live `COMPLETE` detection.
+* Annotated-video playback in Review.
+* Session comparison and player-specific feedback.
 
 ---
 
@@ -154,7 +160,7 @@ Main software tools and libraries:
 | Ultralytics YOLO | Table, ball, and player detection models                             |
 | GStreamer        | High-FPS camera recording                                            |
 | Tkinter          | Desktop GUI                                                          |
-| PySerial         | STM32 serial communication                                           |
+| termios          | STM32 serial communication through Linux serial devices              |
 | NumPy            | Array and coordinate processing                                      |
 | Matplotlib       | Heatmap generation                                                   |
 | Docker           | Development/runtime environment on Jetson                            |
@@ -211,7 +217,9 @@ project/jetson/
 │   ├── bounce_detection_improvement_plan.md
 │   ├── configuration_reference.md
 │   ├── session_json_schema.md
-│   └── documentation_roadmap.md
+│   ├── documentation_roadmap.md
+│   ├── agent-memory.md
+│   └── backlog.md
 │
 ├── gui/
 │   ├── gui.py
@@ -244,7 +252,10 @@ project/jetson/
 │   ├── ball.py
 │   ├── bounce.py
 │   ├── annotate.py
-│   └── heatmap.py
+│   ├── heatmap.py
+│   └── archived/
+│       ├── README.md
+│       └── bounce_separate_state.py
 │
 ├── capture/
 │   └── recordings/
@@ -299,9 +310,12 @@ Check Python imports:
 
 ```bash
 python3 -c "import cv2; print(cv2.__version__)"
-python3 -c "import serial; print(serial.__version__)"
 python3 -c "import tkinter; print('tkinter available')"
+python3 -c "from comm import serial; print('project serial module available')"
 ```
+
+The project serial module uses Python's Linux `termios` interface; the external
+PySerial package is not required.
 
 Check that the GUI can access the display:
 
@@ -346,13 +360,15 @@ Current GUI workflow:
 Home page
 ↓
 Start Training page
-    Configure future training workflow and STM32 commands
+    Preview the camera, configure the drill, record the session,
+    send STM32 commands, and create initial session JSON
 
 Analysis page
     Select a recorded video and run analysis
 
 Review page
-    Select and preview saved heatmap outputs
+    Select a saved session JSON, view summary metrics,
+    and preview its linked heatmap
 ```
 
 The GUI uses page isolation:
@@ -427,7 +443,7 @@ Heatmap images are saved to:
 review/heatmaps/
 ```
 
-Future JSON results are expected in:
+Legacy standalone analysis JSON results may be written to:
 
 ```text
 json_results/
@@ -446,15 +462,17 @@ review/heatmaps/heatmap_sample_001.png
 
 Current known limitations:
 
-* Training page recording is not fully connected yet.
-* Low-FPS camera preview is not fully connected yet.
+* The connected Training, Analysis, and Review workflow still needs a complete
+  hardware run on the Jetson.
 * Table detection overlay during preview is not implemented yet.
-* STM32 serial sending works, but response listening still needs improvement.
-* Automatic STM32 `COMPLETE` detection is not fully integrated yet.
-* Recording start/stop placeholders still need to be replaced with real GStreamer recording calls.
-* JSON result export is planned but not fully finalized.
-* Review page currently focuses on heatmap preview only.
-* Review page does not yet group heatmaps, annotated videos, and JSON results by session.
+* STM32 serial sending is connected, but there is no continuous response reader
+  feeding `COMPLETE` into the controller.
+* Custom display names can create a session JSON filename that Analysis does not
+  find; the stable filename must come from the recording stem.
+* Session JSON is the current structured record, but path portability and schema
+  migration still need explicit policies.
+* Review displays JSON-backed metrics and a heatmap, but does not open the
+  annotated video.
 * Analysis accuracy depends on:
 
   * table corner detection quality
@@ -476,17 +494,17 @@ Recommended next development steps:
 * Add STM32 response listener.
 * Detect `ACK:SETTING`, `ACK:START`, and `ACK:STOP` if used.
 * Detect `COMPLETE` automatically from STM32.
-* Connect real GStreamer recording to the Training Controller.
-* Add idempotent recording stop behavior.
-* Add low-FPS camera preview.
 * Add table detection overlay during preview.
-* Make new recordings automatically appear in the Analysis page.
+* Verify that refresh and navigation make newly finalized recordings available
+  in the Analysis page.
 
 ### Analysis Workflow
 
-* Improve `run_analysis()` return dictionary.
-* Return output paths to the GUI.
-* Add richer JSON result export.
+* Add labeled bounce ground truth and rejection diagnostics before tuning more
+  thresholds.
+* Preserve tracker state ordering with deterministic regression tests.
+* Surface returned artifact paths and model-version details in the GUI.
+* Define schema migration and portable artifact-path rules for session JSON.
 * Save accepted and rejected bounce data.
 * Improve bounce validation and filtering.
 * Add quantitative evaluation metrics.

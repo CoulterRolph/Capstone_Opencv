@@ -17,12 +17,12 @@ Review displays the information.
 
 | File or folder | Responsibility |
 | --- | --- |
-| `gui/review_page.py` | Select a session and display metrics and its heatmap. |
-| `controller/review_controller.py` | Find, load, and interpret session JSON files. |
+| `gui/review_page.py` | Select a session, display metrics and its heatmap, and open its annotated video. |
+| `controller/review_controller.py` | Find, load, and interpret session JSON files and launch annotated videos in VLC. |
 | `gui/scrollable_frame.py` | Keep Review usable on the touchscreen. |
 | `capture/recordings/` | Store `_session.json` files beside recorded MKVs. |
 | `review/heatmaps/` | Store heatmap images referenced by session JSON. |
-| `review/annotated/` | Store annotated videos; playback is not yet exposed in Review. |
+| `review/annotated/` | Store annotated videos opened from Review using VLC. |
 | `gui/review_page_old.py` | Preserved pre-session Review implementation. |
 
 ---
@@ -40,15 +40,22 @@ flowchart TD
     Select --> SessionData[Parsed session dictionary]
     SessionData --> Metrics[Extract summary metrics]
     SessionData --> HeatmapPath[Read heatmap image path]
+    SessionData --> VideoPath[Read annotated video path]
 
     Metrics --> Boxes[Show bounces, ball detection rate, and table status]
     HeatmapPath --> Exists{Image exists?}
     Exists -->|Yes| Preview[Display heatmap]
     Exists -->|No| Missing[Show no heatmap available]
+    VideoPath --> VideoExists{Video exists?}
+    VideoExists -->|Yes| OpenButton[Enable Open Annotated Video]
+    VideoExists -->|No| VideoMissing[Disable button and show unavailable]
+    OpenButton --> VLC[Open video in VLC]
 
     Boxes --> User[User reviews saved results]
     Preview --> User
     Missing --> User
+    VLC --> User
+    VideoMissing --> User
 ```
 
 The controller returns data; the page decides how it should look. Keeping those
@@ -76,6 +83,14 @@ causes the complete JSON file to be loaded.
 | Total Bounces | `summary.total_bounces` |
 | Ball Detection Rate | `ball_tracking.summary.detection_rate` |
 | Table Status | `table.table_detected` |
+| Average Return Speed | `summary.average_return_speed_kmh` |
+| Fastest Return Speed | `summary.fastest_return_speed_kmh` |
+| Shot Percentage | `summary.total_bounces / training_settings.number_of_shots` |
+
+Review calculates Shot Percentage when the session is loaded instead of
+storing a duplicate JSON value. Speed values display in km/h to two decimal
+places. Missing historical speed data or an unavailable/zero shot count displays
+as `--`.
 
 The controller can also extract session name, recording time, homography status,
 and frames containing the ball, although the current page does not display all
@@ -105,14 +120,15 @@ Working in code:
 
 - Session discovery and newest-first ordering
 - JSON loading
-- Bounce, detection-rate, and table-status metrics
+- Two rows of bounce, detection, table, estimated-speed, and shot metrics
 - Heatmap preview
+- VLC-only annotated-video opening
+- Absolute VLC-path discovery for GUI/container environments with a restricted `PATH`
 - Scrollable touchscreen layout
 
 Not yet implemented or verified:
 
 - End-to-end verification that Analysis finds every Training-created JSON
-- Annotated-video playback
 - More detailed ball and bounce diagnostics
 - Session-to-session comparison
 - Exportable reports

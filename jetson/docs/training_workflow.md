@@ -25,7 +25,7 @@ The Training page is not a computer-vision page. Its job is to collect user inpu
 
 | File | Responsibility |
 | --- | --- |
-| `gui/training_page.py` | Tkinter controls for session name, speed, pace, shots, preview, start, stop, and test shot. |
+| `gui/training_page.py` | Tkinter controls for session name, speed, pace, start delay, shots, preview, start, stop, and test shot. |
 | `controller/training_controller.py` | Training state machine, validation, preview/recording/serial coordination, and initial session JSON creation. |
 | `controller/training_controller_config.py` | State names, setting limits, serial toggles, recording toggles, STM32 response keywords. |
 | `capture/preview.py` | Low-FPS OpenCV camera preview service. |
@@ -50,11 +50,14 @@ flowchart TD
     Camera --> PreviewFrame[Latest RGB preview frame]
     PreviewFrame --> TrainingPage
 
-    TrainingPage --> Settings[Session name<br/>Ball speed<br/>Pace seconds<br/>Number of shots]
+    TrainingPage --> Settings[Session name<br/>Ball speed<br/>Pace seconds<br/>Start delay<br/>Number of shots]
     Settings --> TrainingController
 
     TrainingController --> Validate[Validate settings]
-    Validate --> Pace[Convert pace seconds to milliseconds]
+    Validate --> Delay{Start delay greater than zero?}
+    Delay -->|Yes| Countdown[Cancellable countdown<br/>recording and launcher remain stopped]
+    Delay -->|No| Pace[Convert pace seconds to milliseconds]
+    Countdown --> Pace
 
     Pace --> SendSettings[Send SETTINGS command]
     SendSettings --> Serial[comm/serial.py]
@@ -92,6 +95,7 @@ The GUI collects:
 ```text
 ball_speed
 pace_seconds
+start_delay_seconds
 number_of_shots
 ```
 
@@ -101,9 +105,14 @@ Current defaults and limits:
 
 | Setting | Meaning | Current Range |
 | --- | --- | --- |
-| Ball speed | Launcher speed value sent to STM32 | `0` to `100` |
+| Ball speed | Launcher speed value sent to STM32 | `55` to `100` |
 | Pace seconds | Time between shots in the GUI | `0.1` to `60.0` seconds |
+| Start delay | One-time wait before recording and launching begin | `0` to `15.0` seconds |
 | Number of shots | Number of balls to launch | `1` to `999` |
+
+The Start Delay control defaults to `0` and changes in `0.5`-second steps. It
+only affects the current full-training start. It is not sent to the STM32, does
+not affect Test Shot, and is not saved in the session JSON.
 
 The controller converts pace into milliseconds before sending it to the STM32:
 
@@ -253,8 +262,13 @@ stateDiagram-v2
     IDLE --> PREVIEWING: Start Preview
     PREVIEWING --> IDLE: Stop Preview
 
-    IDLE --> STARTING: Start Training
-    PREVIEWING --> STARTING: Start Training stops preview first
+    IDLE --> DELAYING: Start Training with delay
+    PREVIEWING --> DELAYING: Stop preview, then delay
+    IDLE --> STARTING: Start Training with zero delay
+    PREVIEWING --> STARTING: Zero-delay start stops preview first
+
+    DELAYING --> STARTING: Countdown finishes
+    DELAYING --> IDLE: User clicks Stop to cancel
 
     STARTING --> TRAINING: SETTINGS sent, recording and JSON started, START sent
     STARTING --> ERROR: Validation, serial, or recording failure
@@ -303,6 +317,7 @@ Working or mostly connected:
 - Training page controls
 - Settings validation
 - Pace conversion to milliseconds
+- Cancellable 0–15 second training start delay
 - Preview service integration
 - Real GStreamer recording integration
 - STM32 command building

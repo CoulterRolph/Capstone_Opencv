@@ -8,11 +8,11 @@ This file is responsible for:
 - Detecting all ball candidates in each frame
 - Managing the active ball track
 - Managing challenger ball logic
-- Returning the active ball position for bounce.py later
+- Detecting temporal bounces inside the tracker-owned update order
 
 Important:
-- ball.py does NOT detect bounces.
-- bounce.py uses the active ball positions and velocities later.
+- Tracking and bounce detection intentionally share one state machine here.
+- bounce.py adapts tracker-owned bounce points for JSON/heatmap consumers.
 """
 
 
@@ -22,6 +22,7 @@ Important:
 
 import math
 import os
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -116,7 +117,7 @@ BALL_LAUNCH_Y_MAX_FRAC = getattr(
 BALL_INIT_REQUIRE_LAUNCH_REGION = getattr(
     analysis_config,
     "BALL_INIT_REQUIRE_LAUNCH_REGION",
-    True,
+    False,
 )
 
 BALL_INIT_MOTION_WEIGHT = getattr(
@@ -134,7 +135,7 @@ BALL_INIT_CONF_WEIGHT = getattr(
 BALL_INIT_LAUNCH_BONUS = getattr(
     analysis_config,
     "BALL_INIT_LAUNCH_BONUS",
-    40.0,
+    20.0,
 )
 
 BALL_CHALLENGER_MOTION_WEIGHT = getattr(
@@ -159,6 +160,72 @@ BALL_MAX_TRAIL_POINTS = getattr(
     analysis_config,
     "BALL_MAX_TRAIL_POINTS",
     40,
+)
+
+BOUNCE_VY_DOWN_THRESHOLD = getattr(
+    analysis_config,
+    "BOUNCE_VY_DOWN_THRESHOLD",
+    20.0,
+)
+
+BOUNCE_VY_UP_THRESHOLD = getattr(
+    analysis_config,
+    "BOUNCE_VY_UP_THRESHOLD",
+    20.0,
+)
+
+BOUNCE_COOLDOWN_FRAMES = getattr(
+    analysis_config,
+    "BOUNCE_COOLDOWN_FRAMES",
+    6,
+)
+
+BOUNCE_MIN_TRACK_UPDATES = getattr(
+    analysis_config,
+    "BOUNCE_MIN_TRACK_UPDATES",
+    3,
+)
+
+BOUNCE_HISTORY_FRAMES = getattr(
+    analysis_config,
+    "BOUNCE_HISTORY_FRAMES",
+    9,
+)
+
+BOUNCE_INCOMING_MIN_POINTS = getattr(
+    analysis_config,
+    "BOUNCE_INCOMING_MIN_POINTS",
+    3,
+)
+
+BOUNCE_INCOMING_MAX_POINTS = getattr(
+    analysis_config,
+    "BOUNCE_INCOMING_MAX_POINTS",
+    4,
+)
+
+BOUNCE_OUTGOING_MIN_POINTS = getattr(
+    analysis_config,
+    "BOUNCE_OUTGOING_MIN_POINTS",
+    2,
+)
+
+BOUNCE_OUTGOING_MAX_POINTS = getattr(
+    analysis_config,
+    "BOUNCE_OUTGOING_MAX_POINTS",
+    3,
+)
+
+BOUNCE_CONTACT_PLATEAU_TOLERANCE_PX = getattr(
+    analysis_config,
+    "BOUNCE_CONTACT_PLATEAU_TOLERANCE_PX",
+    0.05,
+)
+
+BOUNCE_USE_BBOX_BOTTOM = getattr(
+    analysis_config,
+    "BOUNCE_USE_BBOX_BOTTOM",
+    True,
 )
 
 
@@ -261,16 +328,27 @@ def calculate_distance(x1, y1, x2, y2):
     return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
 
-def is_in_launch_region(center_x, center_y, frame_width, frame_height):
+def is_in_launch_region(
+    center_x,
+    center_y,
+    frame_width,
+    frame_height,
+    launch_region=None,
+):
     """
     Check whether a candidate is inside the preferred launch region.
 
     The launch region helps identify a new incoming ball.
     """
 
-    x_min = int(frame_width * BALL_LAUNCH_X_MIN_FRAC)
-    x_max = int(frame_width * BALL_LAUNCH_X_MAX_FRAC)
-    y_max = int(frame_height * BALL_LAUNCH_Y_MAX_FRAC)
+    if launch_region is None:
+        x_min = int(frame_width * BALL_LAUNCH_X_MIN_FRAC)
+        x_max = int(frame_width * BALL_LAUNCH_X_MAX_FRAC)
+        y_max = int(frame_height * BALL_LAUNCH_Y_MAX_FRAC)
+    else:
+        x_min = int(launch_region["x1"])
+        x_max = int(launch_region["x2"])
+        y_max = int(launch_region["y2"])
 
     return x_min <= center_x <= x_max and center_y <= y_max
 
@@ -341,6 +419,7 @@ def create_empty_active_track():
         "in_launch_region": False,
         "miss_count": 0,
         "update_count": 0,
+        "bounce_registered": False,
     }
 
 
@@ -369,6 +448,7 @@ def create_ball_tracker_state(history_size=BALL_TRACKING_HISTORY_SIZE):
         "active_track": create_empty_active_track(),
         "pending_challenger": None,
         "pending_challenger_count": 0,
+        "display_challenger": None,
         "previous_candidates": [],
         "active_trail": [],
         "positions": [],
@@ -379,6 +459,18 @@ def create_ball_tracker_state(history_size=BALL_TRACKING_HISTORY_SIZE):
         "total_candidates": 0,
         "active_track_switches": 0,
         "active_track_drops": 0,
+        "candidates": [],
+        "bounce_points": [],
+        "bounce_count": 0,
+        "bounce_armed": False,
+        "bounce_cooldown": 0,
+        "bounce_position_history": [],
+        "pending_bounce_x": None,
+        "pending_bounce_y": None,
+        "new_bounce_point": None,
+        "new_bounce_previous_vy": None,
+        "new_bounce_current_vy": None,
+        "new_bounce_time_seconds": None,
     }
 
 
@@ -395,6 +487,7 @@ def detect_ball_candidates_in_frame(
     imgsz=BALL_MODEL_IMGSZ,
     confidence=BALL_MODEL_CONFIDENCE,
     ball_class_id=BALL_CLASS_ID,
+    launch_region=None,
 ):
     """
     Detect all ball candidates in one frame.
@@ -439,6 +532,7 @@ def detect_ball_candidates_in_frame(
         frame_width=frame_width,
         frame_height=frame_height,
         previous_candidates=previous_candidates,
+        launch_region=launch_region,
     )
 
     return candidates, inference_time
@@ -451,6 +545,7 @@ def build_ball_candidates_from_results(
     frame_width,
     frame_height,
     previous_candidates,
+    launch_region=None,
 ):
     """
     Convert YOLO results into a list of ball candidate dictionaries.
@@ -469,6 +564,8 @@ def build_ball_candidates_from_results(
     for box in result.boxes:
         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
 
+        # Keep subpixel precision for shallow motion. Drawing helpers round to
+        # integer screen coordinates only when rendering the annotation.
         x1 = float(x1)
         y1 = float(y1)
         x2 = float(x2)
@@ -512,6 +609,7 @@ def build_ball_candidates_from_results(
             center_y=center_y,
             frame_width=frame_width,
             frame_height=frame_height,
+            launch_region=launch_region,
         )
 
         candidates.append(candidate)
@@ -825,6 +923,276 @@ def append_to_active_trail(tracker_state):
 
 
 # ============================================================
+# Tracker-owned bounce state
+# ============================================================
+
+def reset_tracker_bounce_candidate(tracker_state):
+    """Reset the armed/pending bounce fields used by the original tracker."""
+
+    tracker_state["bounce_armed"] = False
+    tracker_state["pending_bounce_x"] = None
+    tracker_state["pending_bounce_y"] = None
+
+
+def reset_tracker_bounce_history(tracker_state):
+    """Clear temporal bounce evidence when the active track changes."""
+
+    tracker_state["bounce_position_history"] = []
+    reset_tracker_bounce_candidate(tracker_state)
+
+
+def append_bounce_position_sample(tracker_state, frame_index, time_seconds):
+    """Store one floating-point position for temporal bounce detection."""
+
+    active_track = tracker_state["active_track"]
+
+    if not active_track["active"]:
+        return
+
+    if BOUNCE_USE_BBOX_BOTTOM:
+        bounce_y = active_track["bbox"]["y2"]
+    else:
+        bounce_y = active_track["center"]["y"]
+
+    if bounce_y is None:
+        return
+
+    sample = {
+        "frame_index": int(frame_index),
+        "time_seconds": float(time_seconds),
+        "x": float(active_track["center"]["x"]),
+        "y": float(bounce_y),
+    }
+
+    tracker_state["bounce_position_history"].append(sample)
+    tracker_state["bounce_position_history"] = tracker_state[
+        "bounce_position_history"
+    ][-BOUNCE_HISTORY_FRAMES:]
+
+
+def get_median_smoothed_bounce_samples(samples):
+    """Return a three-point moving-median y series with stable endpoints."""
+
+    smoothed_samples = []
+
+    for index, sample in enumerate(samples):
+        smoothed_sample = dict(sample)
+
+        if 0 < index < len(samples) - 1:
+            smoothed_sample["y"] = statistics.median(
+                [
+                    samples[index - 1]["y"],
+                    sample["y"],
+                    samples[index + 1]["y"],
+                ]
+            )
+
+        smoothed_samples.append(smoothed_sample)
+
+    return smoothed_samples
+
+
+def fit_bounce_vertical_slope(samples):
+    """Fit y against video time and return image-space pixels per second."""
+
+    if len(samples) < 2:
+        return None
+
+    times = [sample["time_seconds"] for sample in samples]
+    y_values = [sample["y"] for sample in samples]
+    mean_time = statistics.fmean(times)
+    mean_y = statistics.fmean(y_values)
+
+    denominator = sum((time_value - mean_time) ** 2 for time_value in times)
+    if denominator <= 0:
+        return None
+
+    numerator = sum(
+        (time_value - mean_time) * (y_value - mean_y)
+        for time_value, y_value in zip(times, y_values)
+    )
+
+    return numerator / denominator
+
+
+def find_temporal_bounce_reversal(samples):
+    """Find a smoothed incoming/contact/outgoing reversal in recent samples."""
+
+    minimum_sample_count = (
+        BOUNCE_INCOMING_MIN_POINTS + BOUNCE_OUTGOING_MIN_POINTS - 1
+    )
+    if len(samples) < minimum_sample_count:
+        return None
+
+    smoothed_samples = get_median_smoothed_bounce_samples(samples)
+    first_contact_index = BOUNCE_INCOMING_MIN_POINTS - 1
+    last_contact_index = len(samples) - BOUNCE_OUTGOING_MIN_POINTS
+
+    if first_contact_index > last_contact_index:
+        return None
+
+    candidate_indices = range(first_contact_index, last_contact_index + 1)
+    peak_index = max(
+        candidate_indices,
+        key=lambda index: smoothed_samples[index]["y"],
+    )
+    peak_y = smoothed_samples[peak_index]["y"]
+
+    plateau_start = peak_index
+    while (
+        plateau_start > 0
+        and abs(smoothed_samples[plateau_start - 1]["y"] - peak_y)
+        <= BOUNCE_CONTACT_PLATEAU_TOLERANCE_PX
+    ):
+        plateau_start -= 1
+
+    plateau_end = peak_index
+    while (
+        plateau_end < len(smoothed_samples) - 1
+        and abs(smoothed_samples[plateau_end + 1]["y"] - peak_y)
+        <= BOUNCE_CONTACT_PLATEAU_TOLERANCE_PX
+    ):
+        plateau_end += 1
+
+    incoming_end = plateau_start
+    if incoming_end < BOUNCE_INCOMING_MIN_POINTS - 1:
+        incoming_end = plateau_end
+
+    outgoing_start = plateau_end
+
+    incoming_start = max(
+        0,
+        incoming_end - BOUNCE_INCOMING_MAX_POINTS + 1,
+    )
+    outgoing_end = min(
+        len(smoothed_samples),
+        outgoing_start + BOUNCE_OUTGOING_MAX_POINTS,
+    )
+
+    if incoming_end - incoming_start + 1 < BOUNCE_INCOMING_MIN_POINTS:
+        return None
+    if outgoing_end - outgoing_start < BOUNCE_OUTGOING_MIN_POINTS:
+        return None
+
+    incoming_samples = smoothed_samples[incoming_start : incoming_end + 1]
+    outgoing_samples = smoothed_samples[outgoing_start:outgoing_end]
+
+    incoming_vy = fit_bounce_vertical_slope(incoming_samples)
+    outgoing_vy = fit_bounce_vertical_slope(outgoing_samples)
+
+    if incoming_vy is None or outgoing_vy is None:
+        return None
+
+    if incoming_vy <= BOUNCE_VY_DOWN_THRESHOLD:
+        return None
+
+    if outgoing_vy >= -BOUNCE_VY_UP_THRESHOLD:
+        return None
+
+    contact_samples = samples[plateau_start : plateau_end + 1]
+    contact_sample = max(contact_samples, key=lambda sample: sample["y"])
+
+    return {
+        "contact_sample": contact_sample,
+        "incoming_vy": float(incoming_vy),
+        "outgoing_vy": float(outgoing_vy),
+    }
+
+
+def register_tracker_bounce(tracker_state, frame_index, time_seconds=None):
+    """Store one bounce point in the exact compact format from tracker.py."""
+
+    active_track = tracker_state["active_track"]
+
+    bounce_x = tracker_state["pending_bounce_x"]
+    bounce_y = tracker_state["pending_bounce_y"]
+
+    if bounce_x is None:
+        bounce_x = active_track["center"]["x"]
+
+    if bounce_y is None:
+        bounce_y = active_track["bbox"]["y2"]
+
+    bounce_point = {
+        "x": float(bounce_x),
+        "y": float(bounce_y),
+        "frame": int(frame_index),
+    }
+
+    tracker_state["bounce_points"].append(bounce_point)
+    tracker_state["bounce_count"] += 1
+    tracker_state["new_bounce_point"] = bounce_point.copy()
+    tracker_state["new_bounce_time_seconds"] = time_seconds
+
+    active_track["bounce_registered"] = True
+    tracker_state["bounce_cooldown"] = BOUNCE_COOLDOWN_FRAMES
+    reset_tracker_bounce_candidate(tracker_state)
+
+    return bounce_point
+
+
+def update_tracker_bounce_after_match(
+    tracker_state,
+    frame_index,
+    time_seconds,
+):
+    """Arm and confirm bounces from a short smoothed temporal trajectory."""
+
+    active_track = tracker_state["active_track"]
+    history = tracker_state["bounce_position_history"]
+
+    if len(history) >= BOUNCE_INCOMING_MIN_POINTS:
+        recent_samples = get_median_smoothed_bounce_samples(
+            history[-BOUNCE_INCOMING_MIN_POINTS:]
+        )
+        recent_incoming_vy = fit_bounce_vertical_slope(recent_samples)
+    else:
+        recent_incoming_vy = None
+
+    if (
+        recent_incoming_vy is not None
+        and recent_incoming_vy > BOUNCE_VY_DOWN_THRESHOLD
+        and not active_track["in_launch_region"]
+        and not active_track["bounce_registered"]
+    ):
+        tracker_state["bounce_armed"] = True
+
+        current_sample = history[-1]
+        bbox_bottom = current_sample["y"]
+        pending_y = tracker_state["pending_bounce_y"]
+
+        if pending_y is None or bbox_bottom > pending_y:
+            tracker_state["pending_bounce_x"] = current_sample["x"]
+            tracker_state["pending_bounce_y"] = bbox_bottom
+
+    reversal = find_temporal_bounce_reversal(history)
+
+    bounce_confirmed = (
+        tracker_state["bounce_armed"]
+        and tracker_state["bounce_cooldown"] == 0
+        and active_track["update_count"] >= BOUNCE_MIN_TRACK_UPDATES
+        and reversal is not None
+        and not active_track["in_launch_region"]
+        and not active_track["bounce_registered"]
+    )
+
+    if bounce_confirmed:
+        contact_sample = reversal["contact_sample"]
+        tracker_state["pending_bounce_x"] = contact_sample["x"]
+        tracker_state["pending_bounce_y"] = contact_sample["y"]
+        tracker_state["new_bounce_previous_vy"] = reversal["incoming_vy"]
+        tracker_state["new_bounce_current_vy"] = reversal["outgoing_vy"]
+
+        return register_tracker_bounce(
+            tracker_state=tracker_state,
+            frame_index=contact_sample["frame_index"],
+            time_seconds=contact_sample["time_seconds"],
+        )
+
+    return None
+
+
+# ============================================================
 # Main active-ball tracking update
 # ============================================================
 
@@ -833,6 +1201,7 @@ def update_active_ball_tracking(
     candidates,
     frame_index,
     time_seconds,
+    delta_time=None,
 ):
     """
     Update active-ball tracking using current frame candidates.
@@ -845,12 +1214,22 @@ def update_active_ball_tracking(
     - active-track dropping after too many misses
     """
 
-    delta_time = calculate_delta_time(
-        tracker_state=tracker_state,
-        time_seconds=time_seconds,
-    )
+    if delta_time is None:
+        delta_time = calculate_delta_time(
+            tracker_state=tracker_state,
+            time_seconds=time_seconds,
+        )
 
     active_track = tracker_state["active_track"]
+
+    tracker_state["new_bounce_point"] = None
+    tracker_state["new_bounce_previous_vy"] = None
+    tracker_state["new_bounce_current_vy"] = None
+    tracker_state["new_bounce_time_seconds"] = None
+    tracker_state["display_challenger"] = None
+
+    if tracker_state["bounce_cooldown"] > 0:
+        tracker_state["bounce_cooldown"] -= 1
 
     tracking_update = {
         "track_updated": False,
@@ -876,6 +1255,14 @@ def update_active_ball_tracking(
 
             tracker_state["pending_challenger"] = None
             tracker_state["pending_challenger_count"] = 0
+
+            active_track["bounce_registered"] = False
+            reset_tracker_bounce_history(tracker_state)
+            append_bounce_position_sample(
+                tracker_state=tracker_state,
+                frame_index=frame_index,
+                time_seconds=time_seconds,
+            )
 
             tracking_update["track_updated"] = True
             tracking_update["track_initialized"] = True
@@ -904,6 +1291,18 @@ def update_active_ball_tracking(
             tracking_update["track_updated"] = True
             tracking_update["match_found"] = True
 
+            append_bounce_position_sample(
+                tracker_state=tracker_state,
+                frame_index=frame_index,
+                time_seconds=time_seconds,
+            )
+
+            tracking_update["bounce_point"] = update_tracker_bounce_after_match(
+                tracker_state=tracker_state,
+                frame_index=frame_index,
+                time_seconds=time_seconds,
+            )
+
         else:
             active_track["miss_count"] += 1
 
@@ -917,6 +1316,14 @@ def update_active_ball_tracking(
             best_challenger=best_challenger,
         )
 
+        if (
+            best_challenger is not None
+            and best_challenger["in_launch_region"]
+        ):
+            # Keep the reference algorithm's pending challenger unchanged, but
+            # expose the current-frame candidate for an accurate purple overlay.
+            tracker_state["display_challenger"] = best_challenger
+
         if challenger_confirmed:
             update_track_from_candidate(
                 active_track=active_track,
@@ -929,7 +1336,16 @@ def update_active_ball_tracking(
 
             tracker_state["pending_challenger"] = None
             tracker_state["pending_challenger_count"] = 0
+            tracker_state["display_challenger"] = None
             tracker_state["active_track_switches"] += 1
+
+            active_track["bounce_registered"] = False
+            reset_tracker_bounce_history(tracker_state)
+            append_bounce_position_sample(
+                tracker_state=tracker_state,
+                frame_index=frame_index,
+                time_seconds=time_seconds,
+            )
 
             tracking_update["track_updated"] = True
             tracking_update["track_switched"] = True
@@ -940,7 +1356,10 @@ def update_active_ball_tracking(
             tracker_state["active_trail"] = []
             tracker_state["pending_challenger"] = None
             tracker_state["pending_challenger_count"] = 0
+            tracker_state["display_challenger"] = None
             tracker_state["active_track_drops"] += 1
+
+            reset_tracker_bounce_history(tracker_state)
 
             tracking_update["track_dropped"] = True
 
@@ -952,6 +1371,7 @@ def update_active_ball_tracking(
         )
 
     tracker_state["previous_candidates"] = candidates.copy()
+    tracker_state["candidates"] = candidates.copy()
     tracker_state["previous_time_seconds"] = time_seconds
 
     return tracking_update
@@ -1072,6 +1492,8 @@ def process_ball_frame(
     time_seconds,
     tracker_state,
     model=None,
+    delta_time=None,
+    launch_region=None,
 ):
     """
     Detect ball candidates in one frame and update active-ball tracking.
@@ -1089,6 +1511,7 @@ def process_ball_frame(
         time_seconds=time_seconds,
         previous_candidates=tracker_state["previous_candidates"],
         model=model,
+        launch_region=launch_region,
     )
 
     tracker_state["frames_processed"] += 1
@@ -1102,6 +1525,7 @@ def process_ball_frame(
         candidates=candidates,
         frame_index=frame_index,
         time_seconds=time_seconds,
+        delta_time=delta_time,
     )
 
     ball_detection = build_ball_detection_from_active_track(

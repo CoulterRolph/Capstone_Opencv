@@ -25,6 +25,7 @@ Important:
 # ============================================================
 
 import sys
+import math
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox
@@ -91,6 +92,7 @@ class AnalysisPage(tk.Frame):
         self.recording_paths_by_name = {}
         self.selected_recording_name = tk.StringVar()
         self.selected_model_version = tk.StringVar()
+        self.analysis_progress_value = tk.DoubleVar(value=0.0)
 
         self.status_label = None
         self.recording_dropdown = None
@@ -99,11 +101,24 @@ class AnalysisPage(tk.Frame):
         self.start_analysis_button = None
         self.back_button = None
         self.log_text = None
+        self.progress_bar = None
+        self.progress_percent_label = None
+        self.progress_stage_label = None
+        self.progress_model_label = None
+        self.progress_steps_label = None
+        self.latest_progress = {
+            "percent": 0,
+            "frames_analyzed": 0,
+            "total_frames": 0,
+            "bounce_count": 0,
+            "message": gui_config.ANALYSIS_PROGRESS_READY_TEXT,
+        }
 
         self._configure_ttk_style()
         self._build_page()
         self._load_recording_dropdown()
         self._load_model_version_dropdown()
+        self._load_previous_analysis_for_selected_recording()
         self._start_message_polling()
 
     # --------------------------------------------------------
@@ -120,6 +135,13 @@ class AnalysisPage(tk.Frame):
         style.configure(
             "TCubed.TCombobox",
             font=gui_config.BODY_FONT,
+        )
+
+        style.configure(
+            "TCubed.Horizontal.TProgressbar",
+            troughcolor=gui_config.BORDER_COLOR,
+            background=gui_config.ANALYSIS_BUTTON_COLOR,
+            thickness=22,
         )
 
     def _build_page(self):
@@ -202,6 +224,10 @@ class AnalysisPage(tk.Frame):
         )
 
         self._build_video_selection_section(
+            parent=display_frame,
+        )
+
+        self._build_progress_section(
             parent=display_frame,
         )
 
@@ -361,6 +387,110 @@ class AnalysisPage(tk.Frame):
             column=0,
             sticky="ew",
         )
+
+        self.recording_dropdown.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._on_recording_selected(),
+        )
+
+    def _build_progress_section(self, parent):
+        """Add the analysis milestone display and determinate progress bar."""
+
+        progress_panel = tk.Frame(
+            parent,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
+        progress_panel.pack(
+            fill="x",
+            padx=30,
+            pady=(4, 16),
+        )
+
+        header_frame = tk.Frame(
+            progress_panel,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+        )
+        header_frame.pack(
+            fill="x",
+            padx=16,
+            pady=(14, 8),
+        )
+
+        title_label = tk.Label(
+            header_frame,
+            text=gui_config.ANALYSIS_PROGRESS_TITLE_TEXT,
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
+        )
+        title_label.pack(side="left")
+
+        self.progress_percent_label = tk.Label(
+            header_frame,
+            text="0%",
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
+        )
+        self.progress_percent_label.pack(side="right")
+
+        self.progress_bar = ttk.Progressbar(
+            progress_panel,
+            variable=self.analysis_progress_value,
+            maximum=100,
+            mode="determinate",
+            style="TCubed.Horizontal.TProgressbar",
+        )
+        self.progress_bar.pack(
+            fill="x",
+            padx=16,
+            pady=(0, 8),
+        )
+
+        self.progress_stage_label = tk.Label(
+            progress_panel,
+            text=gui_config.ANALYSIS_PROGRESS_READY_TEXT,
+            font=gui_config.BODY_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_SECONDARY,
+            anchor="w",
+        )
+        self.progress_stage_label.pack(
+            fill="x",
+            padx=16,
+            pady=(0, 4),
+        )
+
+        self.progress_model_label = tk.Label(
+            progress_panel,
+            text="",
+            font=gui_config.BODY_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
+            anchor="w",
+        )
+        self.progress_model_label.pack(
+            fill="x",
+            padx=16,
+            pady=(0, 8),
+        )
+
+        self.progress_steps_label = tk.Label(
+            progress_panel,
+            text="",
+            font=gui_config.LOG_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_MUTED,
+            justify="left",
+            anchor="w",
+        )
+        self.progress_steps_label.pack(
+            fill="x",
+            padx=16,
+            pady=(0, 14),
+        )
+
+        self._render_progress_display()
 
     def _build_log_section(self, parent):
         """
@@ -591,6 +721,53 @@ class AnalysisPage(tk.Frame):
             selected_name,
         )
 
+    def _on_recording_selected(self):
+        """Load saved analysis information for the newly selected recording."""
+
+        self._load_previous_analysis_for_selected_recording()
+
+    def _load_previous_analysis_for_selected_recording(self):
+        """Show previous analysis progress, or the untouched startup state."""
+
+        selected_recording_path = self._get_selected_recording_path()
+
+        if selected_recording_path is None:
+            self._show_startup_progress()
+            return
+
+        try:
+            previous_analysis = (
+                self.analysis_controller.get_previous_analysis_summary(
+                    selected_recording_path
+                )
+            )
+        except ValueError as error:
+            self._show_startup_progress()
+            self._append_log_message(f"Warning: {error}")
+            return
+
+        if previous_analysis is None:
+            self._show_startup_progress()
+            return
+
+        self.latest_progress = {
+            "stage": "previous_analysis",
+            "percent": 100,
+            "frames_analyzed": previous_analysis["frames_analyzed"],
+            "total_frames": previous_analysis["total_frames"],
+            "bounce_count": previous_analysis["bounce_count"],
+            "message": "Previous analysis loaded.",
+            "model_label": previous_analysis.get("model_label"),
+            "table_detected": previous_analysis["table_detected"],
+            "homography_found": previous_analysis["homography_found"],
+            "analysis_processing_time_seconds": previous_analysis.get(
+                "analysis_processing_time_seconds"
+            ),
+            "historical": True,
+            "failed": False,
+        }
+        self._render_progress_display()
+
     def _load_model_version_dropdown(self):
         """Load complete version folders and select the configured default."""
 
@@ -651,6 +828,7 @@ class AnalysisPage(tk.Frame):
 
         self._load_recording_dropdown()
         self._load_model_version_dropdown()
+        self._load_previous_analysis_for_selected_recording()
 
     def _on_start_analysis_clicked(self):
         """
@@ -701,6 +879,10 @@ class AnalysisPage(tk.Frame):
             )
 
             return
+
+        self._reset_analysis_progress(
+            model_label=selected_model_version,
+        )
 
         self._set_status(
             gui_config.ANALYSIS_RUNNING_STATUS_TEXT,
@@ -756,6 +938,10 @@ class AnalysisPage(tk.Frame):
         message_type = message.get("type")
         message_text = message.get("message", "")
 
+        if message_type == "progress":
+            self._handle_analysis_progress(message)
+            return
+
         self._append_log_message(
             f"[{message_type}] {message_text}"
         )
@@ -787,6 +973,19 @@ class AnalysisPage(tk.Frame):
         Update the GUI after analysis completes successfully.
         """
 
+        completion_progress = {
+            "stage": "completed",
+            "percent": 100,
+            "message": "Analysis completed successfully.",
+        }
+        analysis_result = message.get("result")
+        if isinstance(analysis_result, dict):
+            completion_progress["analysis_processing_time_seconds"] = (
+                analysis_result.get("analysis_processing_time_seconds")
+            )
+
+        self._update_analysis_progress(completion_progress)
+
         self._set_status(
             gui_config.ANALYSIS_COMPLETE_STATUS_TEXT,
             gui_config.STATUS_COMPLETE_COLOR,
@@ -810,6 +1009,10 @@ class AnalysisPage(tk.Frame):
         Update the GUI after analysis fails.
         """
 
+        self.latest_progress["failed"] = True
+        self.latest_progress["message"] = "Analysis failed. See the log for details."
+        self._render_progress_display()
+
         self._set_status(
             gui_config.ANALYSIS_FAILED_STATUS_TEXT,
             gui_config.STATUS_FAILED_COLOR,
@@ -831,6 +1034,16 @@ class AnalysisPage(tk.Frame):
             gui_config.ANALYSIS_FAILED_TITLE,
             message_text,
         )
+
+    def _handle_analysis_progress(self, message):
+        """Apply one worker-thread progress event on the Tkinter thread."""
+
+        progress_event = message.get("progress")
+
+        if not isinstance(progress_event, dict):
+            return
+
+        self._update_analysis_progress(progress_event)
 
     # --------------------------------------------------------
     # Result logging
@@ -861,6 +1074,157 @@ class AnalysisPage(tk.Frame):
     # --------------------------------------------------------
     # GUI helpers
     # --------------------------------------------------------
+
+    def _show_startup_progress(self):
+        """Restore the progress panel to its initial, no-analysis display."""
+
+        self.latest_progress = {
+            "stage": "ready",
+            "percent": 0,
+            "frames_analyzed": 0,
+            "total_frames": 0,
+            "bounce_count": 0,
+            "message": gui_config.ANALYSIS_PROGRESS_READY_TEXT,
+            "model_label": None,
+            "analysis_processing_time_seconds": None,
+            "historical": False,
+            "failed": False,
+        }
+        self._render_progress_display()
+
+    def _reset_analysis_progress(self, model_label=None):
+        """Reset progress before starting another recording."""
+
+        self.latest_progress = {
+            "stage": "ready",
+            "percent": 0,
+            "frames_analyzed": 0,
+            "total_frames": 0,
+            "bounce_count": 0,
+            "message": "Preparing analysis...",
+            "model_label": model_label,
+            "analysis_processing_time_seconds": None,
+            "historical": False,
+            "failed": False,
+        }
+        self._render_progress_display()
+
+    def _update_analysis_progress(self, progress_event):
+        """Merge a structured progress event into the visible progress state."""
+
+        for key in (
+            "stage",
+            "percent",
+            "frames_analyzed",
+            "total_frames",
+            "bounce_count",
+            "message",
+            "model_label",
+            "analysis_processing_time_seconds",
+        ):
+            if key in progress_event and progress_event[key] is not None:
+                self.latest_progress[key] = progress_event[key]
+
+        self.latest_progress["failed"] = False
+        self._render_progress_display()
+
+    def _render_progress_display(self):
+        """Render the bar and milestone list from the latest progress state."""
+
+        percent = max(0, min(100, int(self.latest_progress.get("percent", 0))))
+        frames_analyzed = int(self.latest_progress.get("frames_analyzed", 0) or 0)
+        total_frames = int(self.latest_progress.get("total_frames", 0) or 0)
+        bounce_count = int(self.latest_progress.get("bounce_count", 0) or 0)
+        failed = bool(self.latest_progress.get("failed", False))
+        historical = bool(self.latest_progress.get("historical", False))
+
+        try:
+            analysis_processing_time = float(
+                self.latest_progress.get("analysis_processing_time_seconds")
+            )
+            if (
+                not math.isfinite(analysis_processing_time)
+                or analysis_processing_time < 0
+            ):
+                analysis_processing_time = None
+        except (TypeError, ValueError):
+            analysis_processing_time = None
+
+        self.analysis_progress_value.set(percent)
+
+        if self.progress_percent_label is not None:
+            self.progress_percent_label.config(text=f"{percent}%")
+
+        if self.progress_stage_label is not None:
+            stage_color = (
+                gui_config.STATUS_FAILED_COLOR
+                if failed
+                else gui_config.TEXT_ON_DARK_SECONDARY
+            )
+            self.progress_stage_label.config(
+                text=str(self.latest_progress.get("message", "")),
+                fg=stage_color,
+            )
+
+        if self.progress_model_label is not None:
+            model_label = self.latest_progress.get("model_label")
+            model_text = f"Model version: {model_label}" if model_label else ""
+            self.progress_model_label.config(text=model_text)
+
+        start_marker = "✓" if percent >= 5 else "○"
+
+        if historical:
+            table_was_detected = bool(
+                self.latest_progress.get("table_detected", False)
+            )
+            homography_was_found = bool(
+                self.latest_progress.get("homography_found", False)
+            )
+            table_marker = "✓" if table_was_detected else "✕"
+            table_text = "Table detected" if table_was_detected else "Table not detected"
+            homography_marker = "✓" if homography_was_found else "✕"
+            homography_text = (
+                "Homography calculated"
+                if homography_was_found
+                else "Homography not available"
+            )
+        else:
+            table_marker = "✓" if percent >= 25 else ("•" if percent >= 15 else "○")
+            table_text = "Table detected"
+            homography_marker = (
+                "✓" if percent >= 35 else ("•" if percent >= 25 else "○")
+            )
+            homography_text = "Homography calculated"
+
+        bounce_marker = (
+            "✓" if percent >= 96 else ("•" if percent >= 40 else "○")
+        )
+        frame_marker = "✓" if percent >= 96 else ("•" if percent >= 40 else "○")
+        complete_marker = "✕" if failed else ("✓" if percent >= 100 else "○")
+
+        if failed:
+            completion_text = "Failed"
+        elif percent >= 100 and analysis_processing_time is not None:
+            completion_text = f"Completed ({analysis_processing_time:.2f}s)"
+        else:
+            completion_text = "Completed"
+
+        if total_frames > 0:
+            frame_text = f"{frames_analyzed:,} / {total_frames:,}"
+        else:
+            frame_text = f"{frames_analyzed:,}"
+
+        progress_lines = [
+            f"{start_marker} Started",
+            f"{table_marker} {table_text}",
+            f"{homography_marker} {homography_text}",
+            f"{bounce_marker} Ball and bounce detection ({bounce_count} detected)",
+            f"{frame_marker} Frames analyzed ({frame_text})",
+            f"{complete_marker} {completion_text}",
+        ]
+
+        if self.progress_steps_label is not None:
+            self.progress_steps_label.config(text="\n".join(progress_lines))
 
     def _set_status(self, status_text, color=None):
         """

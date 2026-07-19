@@ -19,8 +19,10 @@ problems.
 
 ## Current Algorithm
 
-The current detector lives in `analysis/bounce.py`. It does not use an angle
-threshold. It uses an instantaneous vertical-velocity reversal in image space.
+The current detector lives in the tracker state machine in `analysis/ball.py`.
+`analysis/bounce.py` only adapts registered points for downstream outputs. The
+detector does not use an angle threshold; it uses a short smoothed
+vertical-trajectory reversal in image space.
 
 In image coordinates:
 
@@ -34,31 +36,44 @@ The current confirmation condition is approximately:
 ```text
 Bounce detector is armed
 Cooldown is zero
-Previous vy > BOUNCE_VY_DOWN_THRESHOLD
-Current vy < -BOUNCE_VY_UP_THRESHOLD
+Fitted incoming bbox-bottom slope > BOUNCE_VY_DOWN_THRESHOLD
+Fitted outgoing bbox-bottom slope < -BOUNCE_VY_UP_THRESHOLD
 ```
 
 Current defaults in `analysis/analysis_config.py`:
 
 ```text
-BOUNCE_VY_DOWN_THRESHOLD = 60.0 pixels/second
-BOUNCE_VY_UP_THRESHOLD = 60.0 pixels/second
+BOUNCE_VY_DOWN_THRESHOLD = 20.0 pixels/second
+BOUNCE_VY_UP_THRESHOLD = 20.0 pixels/second
 BOUNCE_COOLDOWN_FRAMES = 6
 BOUNCE_MIN_TRACK_UPDATES = 3
+BOUNCE_HISTORY_FRAMES = 9
+BOUNCE_INCOMING_MIN_POINTS = 3
+BOUNCE_INCOMING_MAX_POINTS = 4
+BOUNCE_OUTGOING_MIN_POINTS = 2
+BOUNCE_OUTGOING_MAX_POINTS = 3
 BOUNCE_USE_BBOX_BOTTOM = True
 BOUNCE_IGNORE_LAUNCH_REGION = True
 ```
 
-The ball velocity is calculated in `analysis/ball.py` from two consecutive
-tracked centers:
+The `20.0` velocity thresholds intentionally differ from tracker.py's original
+`120.0` defaults to improve sensitivity to shallow bounces. The surrounding
+tracker state order remains compatible, but temporal fitting deliberately
+changes bounce frames and results from the original adjacent-frame detector.
+
+YOLO boxes remain floating point for tracking. `analysis/ball.py` keeps the
+most recent nine bbox-bottom positions, applies a three-point moving median,
+and fits `y` against video time on each side of the contact plateau:
 
 ```text
-vy = (new_y - old_y) / delta_time
+incoming vy = fitted slope over 3–4 points
+outgoing vy = fitted slope over 2–3 points
 ```
 
-The detector stores the lowest image point observed while the ball is moving
-downward. If the next trusted movement reverses strongly upward, that stored
-point becomes the bounce location.
+This tolerates flat samples around shallow contact. The detector stores the
+lowest raw bbox-bottom point in the fitted plateau as the contact location. It
+registers at most one bounce per active track and resets temporal evidence when
+the track initializes, switches, or drops.
 
 ---
 
@@ -87,16 +102,18 @@ Important failure modes:
 - Launch-region filtering can exclude valid early motion.
 - A fixed pixel threshold has a different physical meaning across the table.
 
-The key limitation is not simply that the thresholds may be wrong. The current
-detector depends on one pair of frames representing the whole bounce.
+The temporal detector removes the former dependency on one adjacent frame
+pair. Remaining failures should be diagnosed before changing its window or
+thresholds.
 
 ---
 
 ## Key Design Decision
 
-Replace the single-frame decision with a short temporal trajectory decision.
+The single-frame decision has now been replaced with a short temporal
+trajectory decision.
 
-Current approach:
+Previous approach:
 
 ```text
 One strong downward frame
@@ -104,24 +121,24 @@ One strong upward frame
 Register bounce immediately
 ```
 
-Recommended approach:
+Implemented approach:
 
 ```text
 Collect recent trusted positions
 Smooth the trajectory
 Estimate incoming motion over multiple points
 Estimate outgoing motion over multiple points
-Check track stability and table plausibility
-Calculate a bounce confidence score
-Confirm or reject the candidate
+Keep a flat contact plateau pending
+Confirm the fitted down-to-up reversal
 ```
 
-This keeps `bounce.py` independent from YOLO while giving it better motion
-evidence.
+The detector remains tracker-owned in `ball.py`; `bounce.py` remains the
+downstream event adapter. Table plausibility and confidence scoring remain
+possible future extensions.
 
 ---
 
-## Proposed Future Detector
+## Possible Future Confidence Extensions
 
 ```mermaid
 flowchart TD
@@ -208,30 +225,29 @@ trajectory_incomplete
 
 ---
 
-## Phase 2: Temporal Trajectory Detection
+## Phase 2: Temporal Trajectory Detection — Implemented
 
 Maintain a rolling history of approximately 7–9 trusted positions.
 
-Possible initial configuration:
+Implemented initial configuration:
 
 ```text
 BOUNCE_HISTORY_FRAMES = 9
 BOUNCE_INCOMING_MIN_POINTS = 3
 BOUNCE_OUTGOING_MIN_POINTS = 2
-BOUNCE_CONFIRMATION_WINDOW_FRAMES = 4
-BOUNCE_MAX_MISSING_FRAMES = 2
+BOUNCE_INCOMING_MAX_POINTS = 4
+BOUNCE_OUTGOING_MAX_POINTS = 3
 ```
 
-These are starting points, not confirmed final values.
+These remain tunable starting points rather than universal values.
 
-The detector should:
+The detector now:
 
 1. Smooth recent `y` or bbox-bottom values.
 2. Estimate incoming slope from several points.
 3. Keep the lowest/contact candidate pending.
-4. Allow a small number of missed detections.
-5. Estimate outgoing slope from several points.
-6. Confirm only after enough outgoing evidence exists.
+4. Estimates outgoing slope from several points.
+5. Confirms only after enough outgoing evidence exists.
 
 Potential smoothing methods:
 

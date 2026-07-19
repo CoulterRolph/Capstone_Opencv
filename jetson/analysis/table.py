@@ -6,19 +6,20 @@ Table detection functions for the analysis pipeline.
 This file is responsible for:
 - Loading the table model
 - Running table keypoint detection
-- Extracting the four table corners
+- Extracting the four table corners and optional two net posts
 - Building a detected table object
 
 Important:
 - Homography only needs the four table corners.
-- Net keypoints are ignored.
-- If the table model outputs 6 keypoints, only keypoints 0 to 3 are used.
+- Net keypoints are retained for launch-region placement when available.
 
 Expected corner keypoint order:
     0 = bottom-left corner
     1 = bottom-right corner
     2 = top-right corner
     3 = top-left corner
+    4 = left net post
+    5 = right net post
 """
 
 
@@ -224,7 +225,7 @@ def are_table_keypoints_valid(keypoints):
     Check that the table model returned enough usable corner keypoints.
 
     Homography only requires four corners.
-    Extra keypoints, such as net points, are allowed but ignored later.
+    Extra keypoints, such as net posts, are allowed and retained separately.
     """
 
     if keypoints is None:
@@ -258,6 +259,25 @@ def get_corner_keypoints_only(keypoints):
     return keypoints[:TABLE_REQUIRED_KEYPOINT_COUNT]
 
 
+def get_table_object_keypoints(keypoints):
+    """Return four required corners plus two optional net-post positions."""
+
+    if not are_table_keypoints_valid(keypoints):
+        return None
+
+    table_keypoints = np.full((6, 2), np.nan, dtype=np.float32)
+    table_keypoints[:4] = keypoints[:4]
+
+    if len(keypoints) >= 6:
+        net_keypoints = np.asarray(keypoints[4:6], dtype=np.float32)
+
+        for net_index, net_point in enumerate(net_keypoints):
+            if np.all(np.isfinite(net_point)) and not np.allclose(net_point, 0.0):
+                table_keypoints[4 + net_index] = net_point
+
+    return table_keypoints
+
+
 # ============================================================
 # Video-level table detection
 # ============================================================
@@ -269,9 +289,7 @@ def collect_table_keypoints_from_video(
     min_successful_frames=TABLE_DETECTION_MIN_SUCCESSFUL_FRAMES,
 ):
     """
-    Scan early video frames and collect table corner keypoints.
-
-    This function only collects corner keypoints.
+    Scan early video frames and collect table corners and optional net posts.
 
     Args:
         video_capture:
@@ -288,7 +306,7 @@ def collect_table_keypoints_from_video(
 
     Returns:
         List of NumPy arrays.
-        Each array has shape (4, 2).
+        Each array has shape (6, 2); unavailable net posts contain NaN.
     """
 
     print("Loading table model...", flush=True)
@@ -320,10 +338,10 @@ def collect_table_keypoints_from_video(
             print(f"Finished table model on frame {frame_index}.", flush=True)
 
             if keypoints is not None:
-                corner_keypoints = get_corner_keypoints_only(keypoints)
+                table_object_keypoints = get_table_object_keypoints(keypoints)
 
-                if corner_keypoints is not None:
-                    collected_corner_keypoints.append(corner_keypoints)
+                if table_object_keypoints is not None:
+                    collected_corner_keypoints.append(table_object_keypoints)
                     print(
                         f"Table corners detected on frame {frame_index}.",
                         flush=True,
@@ -356,8 +374,8 @@ def detect_table_from_video(video_capture):
     This function:
     1. Samples early frames.
     2. Runs the table model.
-    3. Collects only the four table corners.
-    4. Averages the detected corners.
+    3. Collects four table corners and optional net posts.
+    4. Averages the detected corners and available net posts.
     5. Builds a table object.
 
     Returns:
@@ -387,7 +405,8 @@ def build_table_from_keypoints(table_keypoints):
     Args:
         table_keypoints:
             List of NumPy arrays.
-            Expected shape after conversion: (N, 4, 2)
+            Expected shape after conversion: (N, 6, 2), with optional net
+            posts represented by NaN when unavailable.
 
     Returns:
         table object, or None if the keypoints are invalid.
@@ -402,22 +421,14 @@ def build_table_from_keypoints(table_keypoints):
     print(f"Table keypoint array shape: {keypoint_array.shape}", flush=True)
 
     if keypoint_array.ndim != 3:
-        print("Table keypoint array should have shape (N, 4, 2).", flush=True)
+        print("Table keypoint array should have shape (N, K, 2).", flush=True)
         return None
 
     if keypoint_array.shape[1] < TABLE_REQUIRED_KEYPOINT_COUNT:
         print("Not enough corner keypoints to build table object.", flush=True)
         return None
 
-    # Average across successful detections.
-    # Example:
-    #   Input shape:  (N, 4, 2)
-    #   Output shape: (4, 2)
-    mean_keypoints = np.mean(keypoint_array, axis=0)
-
-    if len(mean_keypoints) < TABLE_REQUIRED_KEYPOINT_COUNT:
-        print("Not enough averaged keypoints to build table object.", flush=True)
-        return None
+    mean_corner_keypoints = np.mean(keypoint_array[:, :4], axis=0)
 
     detected_table = table()
 
@@ -427,31 +438,78 @@ def build_table_from_keypoints(table_keypoints):
     # 2 = top-right
     # 3 = top-left
     #
-    # Net points are not used.
-
     detected_table.set_corner_xy(
         0,
-        int(mean_keypoints[0][0]),
-        int(mean_keypoints[0][1]),
+        int(mean_corner_keypoints[0][0]),
+        int(mean_corner_keypoints[0][1]),
     )
 
     detected_table.set_corner_xy(
         1,
-        int(mean_keypoints[1][0]),
-        int(mean_keypoints[1][1]),
+        int(mean_corner_keypoints[1][0]),
+        int(mean_corner_keypoints[1][1]),
     )
 
     detected_table.set_corner_xy(
         2,
-        int(mean_keypoints[2][0]),
-        int(mean_keypoints[2][1]),
+        int(mean_corner_keypoints[2][0]),
+        int(mean_corner_keypoints[2][1]),
     )
 
     detected_table.set_corner_xy(
         3,
-        int(mean_keypoints[3][0]),
-        int(mean_keypoints[3][1]),
+        int(mean_corner_keypoints[3][0]),
+        int(mean_corner_keypoints[3][1]),
     )
+
+    if keypoint_array.shape[1] >= 6:
+        for net_index in range(2):
+            net_samples = keypoint_array[:, 4 + net_index, :]
+            valid_samples = net_samples[np.all(np.isfinite(net_samples), axis=1)]
+
+            if len(valid_samples) > 0:
+                mean_net_point = np.mean(valid_samples, axis=0)
+                detected_table.set_net_position_xy(
+                    net_index,
+                    int(mean_net_point[0]),
+                    int(mean_net_point[1]),
+                )
+
+    return detected_table
+
+
+def apply_median_net_positions(detected_table, detected_tables):
+    """Stabilize both net posts across accepted table-pose detections."""
+
+    if detected_table is None or detected_tables is None:
+        return detected_table
+
+    for net_index in range(2):
+        samples = []
+
+        for table_detection in detected_tables:
+            if not hasattr(table_detection, "net_position"):
+                continue
+
+            net_points = table_detection.net_position
+
+            if net_points is None or len(net_points) <= net_index:
+                continue
+
+            net_point = net_points[net_index]
+            x = float(net_point.x)
+            y = float(net_point.y)
+
+            if np.isfinite(x) and np.isfinite(y) and not (x == 0.0 and y == 0.0):
+                samples.append((x, y))
+
+        if samples:
+            median_point = np.median(np.asarray(samples, dtype=np.float32), axis=0)
+            detected_table.set_net_position_xy(
+                net_index,
+                int(median_point[0]),
+                int(median_point[1]),
+            )
 
     return detected_table
 
@@ -499,6 +557,20 @@ def print_table_object_keypoints(detected_table):
         f"Corner 3 - Top Left:     "
         f"x = {detected_table.corners[3].x}, "
         f"y = {detected_table.corners[3].y}",
+        flush=True,
+    )
+
+    print(
+        f"Net 0 - Left Post:       "
+        f"x = {detected_table.net_position[0].x}, "
+        f"y = {detected_table.net_position[0].y}",
+        flush=True,
+    )
+
+    print(
+        f"Net 1 - Right Post:      "
+        f"x = {detected_table.net_position[1].x}, "
+        f"y = {detected_table.net_position[1].y}",
         flush=True,
     )
 

@@ -22,6 +22,7 @@ Important:
 # ============================================================
 
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -430,6 +431,31 @@ def merge_analysis_into_session(
     if analysis_result is None:
         return session_log
 
+    analysis_processing_time = analysis_result.get(
+        "analysis_processing_time_seconds"
+    )
+    if analysis_processing_time is not None:
+        try:
+            analysis_processing_time = round(float(analysis_processing_time), 2)
+        except (TypeError, ValueError):
+            analysis_processing_time = None
+
+        if (
+            analysis_processing_time is not None
+            and (
+                not math.isfinite(analysis_processing_time)
+                or analysis_processing_time < 0
+            )
+        ):
+            analysis_processing_time = None
+
+        if analysis_processing_time is not None:
+            if not isinstance(session_log.get("summary"), dict):
+                session_log["summary"] = {}
+            session_log["summary"]["analysis_processing_time_seconds"] = (
+                analysis_processing_time
+            )
+
     # Record exactly which models produced these analysis results.
     if "analysis_models" in analysis_result:
         session_log["analysis_models"] = make_json_safe(
@@ -480,6 +506,21 @@ def merge_analysis_into_session(
     if bounce_tracking:
         bounce_events = bounce_tracking.get("bounce_events", [])
         session_log["bounces"] = make_json_safe(bounce_events)
+
+        bounce_summary = bounce_tracking.get("summary", {})
+        if isinstance(bounce_summary, dict):
+            if not isinstance(session_log.get("summary"), dict):
+                session_log["summary"] = {}
+
+            for metric_name in (
+                "average_return_speed_kmh",
+                "fastest_return_speed_kmh",
+                "speed_bounces_measured",
+            ):
+                if metric_name in bounce_summary:
+                    session_log["summary"][metric_name] = make_json_safe(
+                        bounce_summary[metric_name]
+                    )
 
         # Merge heatmap if available
         heatmap_result = bounce_tracking.get("heatmap")

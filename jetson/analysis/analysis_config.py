@@ -78,7 +78,7 @@ TABLE_MODEL_PATH = resolve_model_path(
 TABLE_MODEL_IMGSZ = 640
 TABLE_MODEL_CONFIDENCE = 0.25
 
-# How many keypoints your table model should output:
+# Keypoint order expected from the table model:
 # 0 = bottom-left corner
 # 1 = bottom-right corner
 # 2 = top-right corner
@@ -86,6 +86,8 @@ TABLE_MODEL_CONFIDENCE = 0.25
 # 4 = left net point
 # 5 = right net point
 TABLE_REQUIRED_KEYPOINT_COUNT = 4
+# Four corners are required for homography. Net posts are optional; when both
+# are valid, they replace BALL_LAUNCH_Y_MAX_FRAC as the launch bottom boundary.
 
 # When detecting the table from a video, we can sample multiple early frames
 # and average the keypoints for a more stable table estimate.
@@ -185,6 +187,23 @@ PLAYER_CLASS_ID = 1
 # How many recent ball positions to keep for bounce detection.
 BALL_TRACKING_HISTORY_SIZE = 12
 
+
+# ============================================================
+# Estimated return-speed settings
+# ============================================================
+
+# Speed is estimated from the active positions immediately before a bounce.
+SPEED_POSITION_WINDOW = 8
+SPEED_MIN_SEGMENT_SAMPLES = 2
+SPEED_MAX_FRAME_GAP = 3
+
+# Broad physical bounds reject stationary noise and impossible tracker jumps.
+SPEED_MIN_KMH = 1.0
+SPEED_MAX_KMH = 200.0
+
+# Median absolute deviation filtering removes isolated segment-speed spikes.
+SPEED_OUTLIER_MAD_MULTIPLIER = 3.0
+
 # Direct test settings for ball.py.
 BALL_TEST_MAX_FRAMES = 60
 BALL_TEST_FRAME_STEP = 1
@@ -222,10 +241,13 @@ BALL_CHALLENGER_SAME_RADIUS = 60.0
 # This is where a newly entering ball is more likely to appear.
 BALL_LAUNCH_X_MIN_FRAC = 0.25
 BALL_LAUNCH_X_MAX_FRAC = 0.75
+# Used only when table-pose net posts are missing or invalid.
 BALL_LAUNCH_Y_MAX_FRAC = 0.45
 
 # Initial active-ball selection weights.
-BALL_INIT_REQUIRE_LAUNCH_REGION = True
+# tracker.py scores launch-region candidates higher but does not require the
+# initial ball to be inside the region.
+BALL_INIT_REQUIRE_LAUNCH_REGION = False
 BALL_INIT_MOTION_WEIGHT = 1.0
 BALL_INIT_CONF_WEIGHT = 25.0
 BALL_INIT_LAUNCH_BONUS = 40.0
@@ -242,11 +264,22 @@ BALL_MAX_TRAIL_POINTS = 40
 # Bounce detection settings
 # ============================================================
 
-BOUNCE_VY_DOWN_THRESHOLD = 60.0
-BOUNCE_VY_UP_THRESHOLD = 60.0
+# Lower than tracker.py's original 120 px/s defaults so shallow vertical
+# reversals can arm and confirm a bounce. Tracker state/update order is unchanged.
+BOUNCE_VY_DOWN_THRESHOLD = 20.0
+BOUNCE_VY_UP_THRESHOLD = 20.0
 
 BOUNCE_COOLDOWN_FRAMES = 6
 BOUNCE_MIN_TRACK_UPDATES = 3
+
+# Use a short temporal window so one flat/jittering frame does not erase a
+# shallow incoming-to-outgoing reversal. Point counts include the contact edge.
+BOUNCE_HISTORY_FRAMES = 9
+BOUNCE_INCOMING_MIN_POINTS = 3
+BOUNCE_INCOMING_MAX_POINTS = 4
+BOUNCE_OUTGOING_MIN_POINTS = 2
+BOUNCE_OUTGOING_MAX_POINTS = 3
+BOUNCE_CONTACT_PLATEAU_TOLERANCE_PX = 0.05
 
 # Use bbox bottom y if available because it is closer to the table contact point.
 BOUNCE_USE_BBOX_BOTTOM = True

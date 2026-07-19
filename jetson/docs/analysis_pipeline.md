@@ -28,18 +28,19 @@ Analysis is offline by design. Training records a video first; analysis processe
 
 | File | Responsibility |
 | --- | --- |
-| `gui/analysis_page.py` | Tkinter page for selecting recordings, starting analysis, and displaying status messages. |
-| `controller/analysis_controller.py` | Lists recordings, starts analysis in a background thread, and queues results/errors back to the GUI. |
+| `gui/analysis_page.py` | Tkinter page for selecting recordings, starting analysis, and displaying milestone/frame progress and status messages. |
+| `controller/analysis_controller.py` | Lists recordings, starts analysis in a background thread, and queues progress/results/errors back to the GUI. |
 | `controller/analysis_controller_config.py` | Recording search path, valid recording extensions, threading toggle, status text. |
 | `analysis/analysis.py` | Main pipeline coordinator. |
 | `analysis/analysis_config.py` | Model paths, thresholds, frame limits, output toggles, heatmap/annotation settings. |
 | `analysis/model_selection.py` | Discovers complete version folders, validates selections, resolves paths, and builds output tags. |
 | `analysis/video_checker.py` | Opens video files and validates metadata/readability. |
-| `analysis/table.py` | Loads the table keypoint YOLO model and detects table corners. |
+| `analysis/table.py` | Loads the table pose model, detects corners/net posts, and stabilizes net positions. |
 | `analysis/homography.py` | Computes stable table homography and maps image points to table coordinates. |
-| `analysis/ball.py` | Loads the ball/player YOLO model, detects ball candidates, and tracks the active ball. |
-| `analysis/bounce.py` | Detects bounces from active-ball vertical motion. |
-| `analysis/annotate.py` | Draws table, ball, trail, bounce, and frame overlays into an output video. |
+| `analysis/ball.py` | Loads the ball/player YOLO model and runs tracker-compatible candidate, active-ball, challenger, and bounce state. |
+| `analysis/bounce.py` | Adapts tracker-owned bounce points for reporting, heatmaps, and JSON. |
+| `analysis/annotate.py` | Draws table, candidate, challenger, active-ball, trail, bounce-state, and frame overlays. |
+| `analysis/archived/` | Reference-only former implementations; see `analysis/archived/README.md`. |
 | `analysis/heatmap.py` | Maps bounces to table space and generates heatmap outputs. |
 | `analysis/log_json.py` | JSON-safe conversion plus session JSON load, merge, and save helpers. |
 
@@ -67,8 +68,8 @@ flowchart TD
 
     Homography --> ResetVideo[Reset video to frame 0]
     ResetVideo --> BallModel[ball.py<br/>Versioned ball/player model]
-    BallModel --> ActiveTrack[Active ball tracking]
-    ActiveTrack --> BounceDetect[bounce.py<br/>Bounce detection]
+    BallModel --> ActiveTrack[ball.py<br/>Tracker-compatible active, challenger, and bounce state]
+    ActiveTrack --> BounceDetect[bounce.py<br/>Output adapter]
 
     BounceDetect --> MapBounces[Map bounce points through homography]
     MapBounces --> AnnotatedVideo[annotate.py<br/>Annotated MKV]
@@ -128,7 +129,13 @@ The table model is expected to return keypoints in this order:
 5 = right net point, if present
 ```
 
-Homography only needs the first four corner points. Extra net keypoints are ignored by the current mapping stage.
+Homography still uses only the first four corner points. Net-post keypoints 4
+and 5 are retained and stabilized separately so their average vertical position
+defines the launch region's bottom edge. The rectangle extends from the top of
+the video (`y=0`) down to that net boundary. If the selected table model does
+not provide valid posts, the configured `BALL_LAUNCH_Y_MAX_FRAC` is used as a
+fallback. Ball selection, challenger filtering, bounce exclusion, and the cyan
+annotation all consume this same rectangle.
 
 ### 3. Stable Homography
 
@@ -181,6 +188,8 @@ The active-ball tracker:
 - Matches the best continuation candidate
 - Handles misses
 - Allows challenger balls to replace the active track after confirmation
+- Arms and confirms at most one bounce per active track
+- Resets pending bounce state when a track initializes, switches, or drops
 - Stores recent positions and an active trail
 ```
 
@@ -188,30 +197,48 @@ Player detection is available at the model/config level, but player-specific met
 
 ### 5. Bounce Detection
 
-`analysis/bounce.py` receives active-ball positions from `ball.py`.
-
-It does not run YOLO and does not choose the active ball. It only looks at the active ball's motion.
+The active algorithm runs inside `analysis/ball.py` in the same order as the
+original `BallTracker.update()` method. `analysis/bounce.py` does not independently
+detect motion; it converts newly registered tracker points into the richer event
+shape required by heatmaps and JSON.
 
 Bounce detection is based on:
 
 ```text
-Strong downward velocity
-Lowest pending contact point
-Strong upward velocity after the downward motion
+Floating-point bounding-box-bottom positions
+Nine-position rolling history
+Three-point moving-median smoothing
+Fitted incoming slope from 3–4 points
+Fitted outgoing slope from 2–3 points
+Flat-frame-tolerant contact plateau
 Cooldown frames to avoid duplicate bounce events
 Minimum track updates before trusting a bounce
-Optional use of bounding-box bottom as the contact y-coordinate
-Optional ignoring of launch-region positions
+Ignoring bounce arming/confirmation inside the launch region
+One registered bounce per active track
+Bounce-state reset during initialization, challenger switch, and track drop
 ```
 
 The output is a list of bounce events with image-space location and timing data.
 
-The current implementation uses a consecutive-frame vertical-velocity reversal,
-not an angle threshold. Camera perspective, missing detections, and track jitter
-can therefore cause real bounces to be missed. See
+When a bounce is confirmed, `analysis/speed.py` uses the recent incoming track
+positions before the reversal frame to estimate speed. Each bbox-bottom point
+is projected through the table homography, converted from table pixels to real
+table millimetres, and divided by video timestamp differences. Invalid table
+mappings, implausible physical speeds, track discontinuities, and isolated
+segment-speed outliers are rejected. A valid bounce records
+`estimated_speed_kmh`, `speed_sample_count`, and the
+`pre_bounce_table_plane` method name.
+
+This is an estimated two-dimensional table-plane speed from one camera. It does
+not measure vertical motion and should not be presented as radar-accurate 3D
+ball speed.
+
+The current implementation uses a short temporal vertical-trajectory reversal,
+not an angle threshold. It tolerates flat frames around shallow contact and
+records the fitted contact frame rather than the later confirmation frame. See
 [Bounce Detection Improvement Plan](bounce_detection_improvement_plan.md) for
-the diagnostic-first roadmap toward temporal trajectory fitting, confidence
-scoring, table gating, and perspective normalization.
+the diagnostic-first roadmap toward confidence scoring, table gating, and
+perspective normalization.
 
 ### 6. Annotation
 
@@ -222,7 +249,11 @@ Possible overlays include:
 ```text
 - Frame/time information
 - Table outline
-- Active ball box/center
+- Green candidate boxes with confidence and motion
+- Purple pending challenger with confirmation progress
+- Red active ball with confidence and velocity
+- Blue active trail
+- Yellow bounce points, last bounce, armed state, and cooldown
 - Ball trail
 - Bounce markers
 - Optional mini heatmap overlay
@@ -259,6 +290,8 @@ It can represent:
 - Table corners
 - Homography data
 - Bounce positions
+- Per-bounce estimated return speeds
+- Average/fastest estimated return-speed summary
 - Summary metrics
 - Quality flags
 ```
@@ -293,7 +326,51 @@ Important rule:
 The analysis worker thread should not update Tkinter widgets directly.
 ```
 
-The controller sends status dictionaries through a queue. The Analysis page polls that queue and updates the GUI safely.
+The controller sends status and structured progress dictionaries through a
+queue. The Analysis page polls that queue and updates the GUI safely.
+
+### GUI progress reporting
+
+`run_analysis()` accepts an optional progress callback. Direct terminal runs do
+not need to provide one. The controller supplies a callback for GUI runs and
+forwards each event through its existing thread-safe message queue.
+
+The determinate progress display uses these milestones:
+
+```text
+5%    analysis started
+10%   video opened and validated
+25%   table detected
+35%   homography calculated
+40-95% ball tracking, bounce detection, and frame processing
+96-99% output generation, result packaging, and session JSON merge
+100%  completed
+```
+
+The frame stage calculates its percentage from `frames_analyzed / total_frames`
+and reports only when the displayed percentage changes or a bounce is detected.
+This avoids flooding the GUI queue. Bounce detection is part of the active-ball
+frame loop, so the page shows its live count alongside frame progress rather
+than presenting it as a separate pass. Player-specific progress is intentionally
+not shown because the current pipeline does not produce player metrics.
+
+When the user selects a recording, the controller checks for the matching
+`<recording_stem>_session.json`. A JSON file is treated as previously analyzed
+only when it contains real analysis evidence: recorded model metadata, a
+positive processed-frame count, or a saved analysis artifact. Empty Training
+placeholders therefore leave the progress panel in its startup state.
+
+For a previously analyzed recording, the page reconstructs the completed
+milestones, frame count, bounce count, table/homography status, and model version
+from the session JSON. Older analyzed records without `analysis_models` still
+show their saved progress but omit the model label. Displaying a prior model does
+not change the model selected for the next run.
+
+Successful analysis also records `summary.analysis_processing_time_seconds`.
+The timer covers `run_analysis()` through artifact generation and video cleanup;
+it does not include the controller's later session-JSON merge. Live and historical
+progress displays format the value as `Completed (23.45s)`. Older records without
+the optional field continue to show `Completed`.
 
 ---
 
@@ -313,8 +390,8 @@ capture/recordings/
 ```
 
 The Review page uses session JSON to show bounce count, ball-detection rate,
-table status, and the referenced heatmap. Annotated-video playback remains
-future-facing.
+table status, and the referenced heatmap. It also resolves the annotated-video
+artifact and can open it directly in VLC.
 
 When both models use v2, the model tag is `v2`. If separate selectors are added
 later, a mixed selection uses a tag such as `table-v1_ball-v2`.
@@ -328,6 +405,7 @@ Working or mostly connected:
 ```text
 - Recording selection from capture/recordings
 - Background-thread analysis
+- Milestone progress bar with live frame and bounce counts
 - Video validation
 - YOLO table keypoint detection
 - Stable homography
@@ -358,7 +436,7 @@ analysis_page.py should not contain YOLO or OpenCV pipeline logic.
 analysis_controller.py should only coordinate analysis startup and status.
 analysis/analysis.py should coordinate the CV pipeline.
 table.py should own table model inference.
-ball.py should own active-ball tracking.
-bounce.py should only reason about active-ball motion.
+ball.py should own the tracker-compatible active-ball, challenger, and bounce state machine.
+bounce.py should only adapt tracker bounce points for downstream consumers.
 annotate.py and heatmap.py should generate review outputs without controlling the GUI.
 ```

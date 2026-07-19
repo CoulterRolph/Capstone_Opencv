@@ -52,6 +52,7 @@ if str(CONTROLLER_DIR) not in sys.path:
 # ============================================================
 
 import gui_config
+import training_controller_config
 from training_controller import TrainingController
 from scrollable_frame import ScrollableFrame
 
@@ -139,8 +140,13 @@ class TrainingPage(tk.Frame):
         self.page_manager = page_manager
         self.training_controller = TrainingController()
 
-        self.ball_speed_var = tk.IntVar(value=75)
+        self.ball_speed_var = tk.IntVar(
+            value=training_controller_config.DEFAULT_BALL_SPEED
+        )
         self.pace_seconds_var = tk.DoubleVar(value=1.5)
+        self.start_delay_seconds_var = tk.DoubleVar(
+            value=training_controller_config.DEFAULT_START_DELAY_SECONDS
+        )
         self.number_of_shots_var = tk.IntVar(value=10)
         self.session_name_var = tk.StringVar(value="")
 
@@ -279,6 +285,7 @@ class TrainingPage(tk.Frame):
         self._build_session_name_control(settings_card)
         self._build_ball_speed_control(settings_card)
         self._build_pace_control(settings_card)
+        self._build_start_delay_control(settings_card)
         self._build_number_of_shots_control(settings_card)
 
     def _build_session_name_control(self, parent):
@@ -361,8 +368,8 @@ class TrainingPage(tk.Frame):
 
         slider = tk.Scale(
             row_frame,
-            from_=0,
-            to=100,
+            from_=training_controller_config.MIN_BALL_SPEED,
+            to=training_controller_config.MAX_BALL_SPEED,
             orient="horizontal",
             variable=self.ball_speed_var,
             command=self._on_ball_speed_changed,
@@ -448,6 +455,94 @@ class TrainingPage(tk.Frame):
             spinner_frame,
             text="+",
             command=self._on_pace_plus_clicked,
+            font=("Arial", 16, "bold"),
+            fg="white",
+            bg=PRIMARY_BUTTON_COLOR,
+            activeforeground="white",
+            activebackground=PRIMARY_BUTTON_COLOR,
+            relief="flat",
+            padx=12,
+            pady=6,
+            cursor="hand2",
+        )
+        plus_button.pack(
+            side="left",
+            padx=(12, 0),
+        )
+
+    def _build_start_delay_control(self, parent):
+        """
+        Build the one-time training start-delay spinner.
+
+        This intentionally matches the visual format of the pace control.
+        """
+
+        row_frame = tk.Frame(
+            parent,
+            bg=CARD_BACKGROUND_COLOR,
+        )
+        row_frame.pack(
+            fill="x",
+            pady=(0, 18),
+        )
+
+        label = tk.Label(
+            row_frame,
+            text="Start Delay (seconds)",
+            font=NORMAL_FONT,
+            fg=TEXT_DARK_COLOR,
+            bg=CARD_BACKGROUND_COLOR,
+        )
+        label.pack(
+            anchor="w",
+            pady=(0, 8),
+        )
+
+        spinner_frame = tk.Frame(
+            row_frame,
+            bg=CARD_BACKGROUND_COLOR,
+        )
+        spinner_frame.pack(
+            anchor="w",
+            pady=(6, 0),
+        )
+
+        minus_button = tk.Button(
+            spinner_frame,
+            text="-",
+            command=self._on_start_delay_minus_clicked,
+            font=("Arial", 16, "bold"),
+            fg="white",
+            bg=PRIMARY_BUTTON_COLOR,
+            activeforeground="white",
+            activebackground=PRIMARY_BUTTON_COLOR,
+            relief="flat",
+            padx=12,
+            pady=6,
+            cursor="hand2",
+        )
+        minus_button.pack(
+            side="left",
+            padx=(0, 12),
+        )
+
+        value_label = tk.Label(
+            spinner_frame,
+            textvariable=self.start_delay_seconds_var,
+            font=("Arial", 18, "bold"),
+            fg=TEXT_DARK_COLOR,
+            bg=CARD_BACKGROUND_COLOR,
+            width=8,
+        )
+        value_label.pack(
+            side="left",
+            padx=12,
+        )
+
+        plus_button = tk.Button(
+            spinner_frame,
+            text="+",
+            command=self._on_start_delay_plus_clicked,
             font=("Arial", 16, "bold"),
             fg="white",
             bg=PRIMARY_BUTTON_COLOR,
@@ -808,6 +903,28 @@ class TrainingPage(tk.Frame):
         new_value = min(3.0, current + 0.5)
         self.pace_seconds_var.set(new_value)
 
+    def _on_start_delay_minus_clicked(self):
+        """
+        Decrease the one-time start delay by 0.5 seconds.
+        """
+
+        current = self.start_delay_seconds_var.get()
+        minimum_delay = training_controller_config.MIN_START_DELAY_SECONDS
+        increment = training_controller_config.START_DELAY_INCREMENT_SECONDS
+        new_value = max(minimum_delay, current - increment)
+        self.start_delay_seconds_var.set(round(new_value, 1))
+
+    def _on_start_delay_plus_clicked(self):
+        """
+        Increase the one-time start delay by 0.5 seconds.
+        """
+
+        current = self.start_delay_seconds_var.get()
+        maximum_delay = training_controller_config.MAX_START_DELAY_SECONDS
+        increment = training_controller_config.START_DELAY_INCREMENT_SECONDS
+        new_value = min(maximum_delay, current + increment)
+        self.start_delay_seconds_var.set(round(new_value, 1))
+
     def _on_shots_minus_clicked(self):
         """
         Decrease number of shots by 1 (minimum 2).
@@ -867,7 +984,13 @@ class TrainingPage(tk.Frame):
         if training_values is None:
             return
 
-        ball_speed, pace_seconds, number_of_shots, session_name = training_values
+        (
+            ball_speed,
+            pace_seconds,
+            start_delay_seconds,
+            number_of_shots,
+            session_name,
+        ) = training_values
 
         try:
             self.training_controller.start_training(
@@ -875,6 +998,7 @@ class TrainingPage(tk.Frame):
                 pace_seconds=pace_seconds,
                 number_of_shots=number_of_shots,
                 session_name=session_name,
+                start_delay_seconds=start_delay_seconds,
             )
 
             self._set_training_button_state()
@@ -967,6 +1091,7 @@ class TrainingPage(tk.Frame):
         try:
             ball_speed = int(self.ball_speed_var.get())
             pace_seconds = float(self.pace_seconds_var.get())
+            start_delay_seconds = float(self.start_delay_seconds_var.get())
             number_of_shots = int(self.number_of_shots_var.get())
             session_name = self.session_name_var.get().strip()
 
@@ -977,12 +1102,19 @@ class TrainingPage(tk.Frame):
                     "Please enter valid training settings.\n\n"
                     "Ball speed must be an integer.\n"
                     "Pace must be a number in seconds.\n"
+                    "Start delay must be a number in seconds.\n"
                     "Number of shots must be an integer."
                 ),
             )
             return None
 
-        return ball_speed, pace_seconds, number_of_shots, session_name
+        return (
+            ball_speed,
+            pace_seconds,
+            start_delay_seconds,
+            number_of_shots,
+            session_name,
+        )
 
     def _read_test_shot_values_from_gui(self):
         """
@@ -1329,6 +1461,7 @@ class TrainingPage(tk.Frame):
         state = str(self._get_controller_state()).upper()
 
         return state in {
+            "DELAYING",
             "STARTING",
             "TRAINING",
             "STOPPING",
@@ -1357,6 +1490,7 @@ class TrainingPage(tk.Frame):
             self._set_previewing_button_state()
 
         elif state in {
+            "DELAYING",
             "STARTING",
             "TRAINING",
             "STOPPING",
