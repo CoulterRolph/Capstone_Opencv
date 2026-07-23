@@ -30,6 +30,11 @@ Instead:
 import cv2 as cv
 import numpy as np
 
+try:
+    from camera_geometry import correct_image_point, correct_image_points
+except ModuleNotFoundError:
+    from analysis.camera_geometry import correct_image_point, correct_image_points
+
 
 # ============================================================
 # Import analysis configuration
@@ -527,6 +532,7 @@ def validate_source_points_for_homography(source_points):
 def compute_table_homography(
     detected_table,
     output_width=HOMOGRAPHY_OUTPUT_WIDTH,
+    image_point_correction=None,
 ):
     """
     Compute the table homography matrix using one detected table object.
@@ -534,14 +540,28 @@ def compute_table_homography(
     This keeps your original single-frame behavior working.
     """
 
-    source_points = get_table_source_points(detected_table)
+    raw_corner_points = get_table_corner_array(detected_table)
+    corrected_corner_points = correct_image_points(
+        raw_corner_points,
+        image_point_correction,
+    ).astype(np.float32)
+    source_points = get_table_source_points_from_corner_array(
+        corrected_corner_points,
+    )
 
     homography_result = compute_table_homography_from_source_points(
         source_points=source_points,
         output_width=output_width,
     )
 
-    homography_result["corner_points"] = get_table_corner_array(detected_table)
+    homography_result["raw_corner_points"] = raw_corner_points
+    homography_result["corner_points"] = corrected_corner_points
+    homography_result["coordinate_space"] = (
+        "undistorted_pixels"
+        if image_point_correction and image_point_correction.get("enabled")
+        else "raw_image_pixels"
+    )
+    homography_result["image_point_correction"] = image_point_correction
     homography_result["homography_method"] = "single_detection"
 
     return homography_result
@@ -629,6 +649,7 @@ def compute_stable_table_homography(
     min_valid_detections=HOMOGRAPHY_MIN_VALID_DETECTIONS,
     reject_outliers=HOMOGRAPHY_REJECT_OUTLIERS,
     max_corner_error_px=HOMOGRAPHY_MAX_CORNER_ERROR_PX,
+    image_point_correction=None,
 ):
     """
     Compute one stable homography from multiple detected table objects.
@@ -656,6 +677,7 @@ def compute_stable_table_homography(
         min_valid_detections=min_valid_detections,
         reject_outliers=reject_outliers,
         max_corner_error_px=max_corner_error_px,
+        image_point_correction=image_point_correction,
     )
 
     homography_result = compute_table_homography_from_corner_array(
@@ -666,6 +688,12 @@ def compute_stable_table_homography(
     homography_result["stable_corners"] = stable_corners
     homography_result["homography_sampling_report"] = sampling_report
     homography_result["homography_method"] = "stable_multi_detection"
+    homography_result["coordinate_space"] = (
+        "undistorted_pixels"
+        if image_point_correction and image_point_correction.get("enabled")
+        else "raw_image_pixels"
+    )
+    homography_result["image_point_correction"] = image_point_correction
 
     return homography_result
 
@@ -675,6 +703,7 @@ def compute_stable_table_corners(
     min_valid_detections=HOMOGRAPHY_MIN_VALID_DETECTIONS,
     reject_outliers=HOMOGRAPHY_REJECT_OUTLIERS,
     max_corner_error_px=HOMOGRAPHY_MAX_CORNER_ERROR_PX,
+    image_point_correction=None,
 ):
     """
     Convert multiple detected table objects into one stable corner array.
@@ -686,6 +715,7 @@ def compute_stable_table_corners(
 
     valid_corner_arrays, rejected_detections = collect_valid_corner_arrays(
         detected_tables,
+        image_point_correction=image_point_correction,
     )
 
     if len(valid_corner_arrays) < min_valid_detections:
@@ -741,7 +771,7 @@ def compute_stable_table_corners(
     return stable_corners, sampling_report
 
 
-def collect_valid_corner_arrays(detected_tables):
+def collect_valid_corner_arrays(detected_tables, image_point_correction=None):
     """
     Convert a list of detected table objects into valid corner arrays.
 
@@ -762,6 +792,16 @@ def collect_valid_corner_arrays(detected_tables):
             validate_corner_array_for_homography(
                 corner_array,
                 label=f"detection {detection_index}",
+            )
+
+            corner_array = correct_image_points(
+                corner_array,
+                image_point_correction,
+            ).astype(np.float32)
+
+            validate_corner_array_for_homography(
+                corner_array,
+                label=f"corrected detection {detection_index}",
             )
 
             valid_corner_arrays.append(corner_array)
@@ -968,6 +1008,49 @@ def map_image_point_to_table(point_x, point_y, homography_matrix):
     return table_x, table_y
 
 
+def map_image_point_with_homography_result(point_x, point_y, homography_result):
+    """Correct and map one raw image point using one consistent result.
+
+    The homography matrix is built in the corrected coordinate system when an
+    ``image_point_correction`` block is present. Therefore the raw point must be
+    undistorted before ``perspectiveTransform`` is applied.
+    """
+
+    if not isinstance(homography_result, dict):
+        raise ValueError("Homography result is missing.")
+    homography_matrix = homography_result.get("homography_matrix")
+    output_size = homography_result.get("output_size")
+    if homography_matrix is None or output_size is None:
+        raise ValueError("Homography matrix or output size is missing.")
+
+    correction = homography_result.get("image_point_correction")
+    corrected_x, corrected_y = correct_image_point(
+        (float(point_x), float(point_y)),
+        correction,
+    )
+    table_x, table_y = map_image_point_to_table(
+        point_x=corrected_x,
+        point_y=corrected_y,
+        homography_matrix=homography_matrix,
+    )
+    width, height = int(output_size[0]), int(output_size[1])
+    if width <= 1 or height <= 1:
+        raise ValueError("Homography output size is invalid.")
+    x_normalized = table_x / (width - 1)
+    y_normalized = table_y / (height - 1)
+    return {
+        "raw_image_point": (float(point_x), float(point_y)),
+        "undistorted_image_point": (corrected_x, corrected_y),
+        "table_pixel_point": (table_x, table_y),
+        "table_normalized_point": (x_normalized, y_normalized),
+        "table_mm_point": (
+            x_normalized * TABLE_LENGTH_MM,
+            y_normalized * TABLE_WIDTH_MM,
+        ),
+        "correction_applied": bool(correction and correction.get("enabled")),
+    }
+
+
 def normalize_table_point(table_x, table_y, output_size):
     """
     Convert top-down table pixel coordinates into normalized coordinates.
@@ -1057,6 +1140,18 @@ def print_homography_report(homography_result):
 
     if "homography_method" in homography_result:
         print(f"Method:           {homography_result['homography_method']}")
+
+    print(
+        "Coordinate space:  "
+        f"{homography_result.get('coordinate_space', 'raw_image_pixels')}"
+    )
+
+    point_correction = homography_result.get("image_point_correction")
+    if point_correction and point_correction.get("enabled"):
+        print(f"Point correction: {point_correction.get('model')}")
+        print(f"Calibration:      {point_correction.get('calibration_id')}")
+    else:
+        print("Point correction: disabled")
 
     print()
     print("Source points:")

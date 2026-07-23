@@ -45,7 +45,7 @@ if str(CONTROLLER_DIR) not in sys.path:
 
 import review_controller_config
 
-# Import recording config to find recordings directory
+# Import the shared recording JSON storage contract.
 if str(CAPTURE_DIR) not in sys.path:
     sys.path.insert(
         0,
@@ -53,9 +53,9 @@ if str(CAPTURE_DIR) not in sys.path:
     )
 
 try:
-    from recording_config import RECORDINGS_DIR
+    from session_paths import RECORDING_JSON_DIR
 except ImportError:
-    RECORDINGS_DIR = PROJECT_ROOT / "capture" / "recordings"
+    RECORDING_JSON_DIR = PROJECT_ROOT / "capture" / "recording_json"
 
 
 # ============================================================
@@ -79,19 +79,19 @@ class ReviewController:
         """
         Return a list of available training session JSON paths.
 
-        Session JSONs are located next to recorded MKV files.
+        Session JSONs are stored centrally under capture/recording_json/.
         Newest files are returned first.
         """
 
-        if not RECORDINGS_DIR.exists():
+        if not RECORDING_JSON_DIR.exists():
             return []
 
-        if not RECORDINGS_DIR.is_dir():
+        if not RECORDING_JSON_DIR.is_dir():
             return []
 
         session_paths = []
 
-        for file_path in RECORDINGS_DIR.iterdir():
+        for file_path in RECORDING_JSON_DIR.iterdir():
             if not file_path.is_file():
                 continue
 
@@ -341,7 +341,7 @@ def test_list_available_sessions():
     controller = ReviewController()
     session_paths = controller.list_available_sessions()
 
-    print(f"Recordings directory: {RECORDINGS_DIR}")
+    print(f"Recording JSON directory: {RECORDING_JSON_DIR}")
     print(f"Sessions found:       {len(session_paths)}")
 
     for session_path in session_paths:

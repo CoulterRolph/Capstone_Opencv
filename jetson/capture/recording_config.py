@@ -3,6 +3,11 @@
 
 from pathlib import Path
 
+try:
+    from .session_paths import RECORDING_JSON_DIR
+except ImportError:
+    from session_paths import RECORDING_JSON_DIR
+
 
 # ============================================================
 # Project folders

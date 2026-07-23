@@ -80,6 +80,7 @@ for path_to_add in paths_to_add:
 
 import training_controller_config
 import recording_config
+from session_paths import build_session_json_path
 
 
 # ============================================================
@@ -1244,24 +1245,14 @@ class TrainingController:
 
     def _build_session_metadata_path(self, recording_path, user_session_name=None):
         """
-        Build a metadata JSON path next to the recorded MKV.
+        Build the stable central JSON path for the recorded MKV.
 
-        Uses user_session_name if provided and non-empty.
-        Otherwise defaults to the recording video's stem (original naming convention).
+        ``user_session_name`` remains accepted for compatibility, but filenames
+        always follow the recording stem. The friendly name is stored inside
+        ``session.session_name`` instead of being used as the lookup key.
         """
 
-        recording_path = Path(recording_path)
-
-        # Decide whether to use user-provided session name or recording stem
-        if user_session_name and str(user_session_name).strip():
-            # Use sanitized user-provided session name
-            base_name = self._sanitize_session_name_for_filename(user_session_name)
-        else:
-            # Fall back to recording video filename (original naming convention)
-            base_name = recording_path.stem
-
-        filename = f"{base_name}_session.json"
-        return recording_path.parent / filename
+        return build_session_json_path(recording_path)
 
     def _build_session_metadata(self):
         """
@@ -1277,6 +1268,7 @@ class TrainingController:
                 "recording_video_path": str(self.last_recording_path),
                 "recording_time": datetime.now().isoformat(timespec="seconds"),
                 "json_version": "2.0",
+                "session_origin": "training",
             },
             "training_settings": self.current_settings.to_dict() if self.current_settings is not None else {},
             "recording_settings": {
@@ -1286,6 +1278,7 @@ class TrainingController:
                 "recording_fps": recording_config.RECORDING_FPS,
             },
             "video": {},
+            "camera_calibration": None,
             "table": {
                 "table_detected": False,
                 "corners": {},

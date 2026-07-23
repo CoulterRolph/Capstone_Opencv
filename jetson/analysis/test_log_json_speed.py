@@ -66,6 +66,44 @@ class SpeedJsonMergeTests(unittest.TestCase):
             1,
         )
 
+    def test_merges_camera_and_corrected_bounce_coordinates(self):
+        session_log = {
+            "bounces": [],
+            "summary": {"total_bounces": 0},
+            "quality_flags": {"no_bounces_detected": True},
+            "ball_tracking": {
+                "summary": {},
+                "recent_positions": [],
+                "active_trail": [],
+            },
+        }
+        correction = {
+            "enabled": True,
+            "model": "opencv_fisheye",
+            "image_size": [1280, 720],
+        }
+        bounce = {
+            "image_position": {"x": 100.0, "y": 200.0},
+            "undistorted_image_position": {"x": 95.0, "y": 198.0},
+            "table_position_mm": {"x": 1200.0, "y": 700.0},
+            "camera_correction_applied": True,
+        }
+        merged = merge_analysis_into_session(
+            session_log,
+            {
+                "camera_calibration": correction,
+                "bounce_tracking": {
+                    "bounce_events": [bounce],
+                    "summary": {"total_bounces": 1},
+                },
+            },
+        )
+        self.assertEqual(merged["camera_calibration"], correction)
+        self.assertEqual(
+            merged["bounces"][0]["undistorted_image_position"]["x"],
+            95.0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

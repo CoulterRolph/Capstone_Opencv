@@ -12,7 +12,8 @@ Current schema version written by Training:
 2.0
 ```
 
-Session JSON files are stored beside recordings in `capture/recordings/`.
+Session JSON files are stored in `capture/recording_json/`. The corresponding
+video files remain in `capture/recordings/`.
 
 ---
 
@@ -54,6 +55,7 @@ Review reads but does not modify the record.
   "training_settings": {},
   "recording_settings": {},
   "video": {},
+  "camera_calibration": {},
   "table": {},
   "homography": {},
   "bounces": [],
@@ -66,8 +68,9 @@ Review reads but does not modify the record.
 }
 ```
 
-Historical session files may not contain `analysis_models` or `artifacts`
-because those sections were added after the first JSON pipeline. Readers should
+Historical session files may not contain `camera_calibration`,
+`analysis_models`, or `artifacts` because those sections were added after the
+first JSON pipeline. Readers should
 use safe defaults when a field is absent.
 
 ---
@@ -76,10 +79,11 @@ use safe defaults when a field is absent.
 
 | Section | Writer | Reader | Initial state |
 | --- | --- | --- | --- |
-| `session` | Training | Analysis, Review | Populated |
+| `session` | Training; Analysis fallback | Analysis, Review | Populated |
 | `training_settings` | Training | Review/future reporting | Populated |
 | `recording_settings` | Training | Analysis/future diagnostics | Populated |
 | `video` | Analysis | Review/future reporting | Empty object |
+| `camera_calibration` | Analysis | Review/future diagnostics | `null` |
 | `table` | Analysis | Review, heatmap/reporting | Failure placeholder |
 | `homography` | Analysis | Heatmap, Review/future diagnostics | Failure placeholder |
 | `bounces` | Analysis | Review, heatmap/reporting | Empty list |
@@ -99,7 +103,8 @@ use safe defaults when a field is absent.
   "session_name": "Training Session 20260708_154706",
   "recording_video_path": "/workspace/.../capture/recordings/gameplay_....mkv",
   "recording_time": "2026-07-08T15:47:06",
-  "json_version": "2.0"
+  "json_version": "2.0",
+  "session_origin": "training"
 }
 ```
 
@@ -107,8 +112,12 @@ use safe defaults when a field is absent.
 | --- | --- | --- | --- |
 | `session_name` | string | Yes | Human-friendly session name. |
 | `recording_video_path` | string | Yes | Path to the source MKV. |
-| `recording_time` | ISO-8601 string | Yes | Time Training created the record. |
+| `recording_time` | ISO-8601 string | Yes | Training time, or video modification time for an analysis-only record. |
 | `json_version` | string | Yes | Session schema version. |
+| `session_origin` | string | Yes for new records | `training` or `analysis_only`. |
+
+Analysis uses `analysis_only` when it creates metadata for an older video that
+did not already have a corresponding session JSON.
 
 Current paths are generally absolute and may contain container-specific prefixes
 such as `/workspace`. A future schema should consider project-relative paths for
@@ -209,12 +218,24 @@ If detection fails:
   "homography_matrix": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
   "source_points": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
   "destination_points": [[0.0, 0.0], [1199.0, 0.0], [1199.0, 667.0], [0.0, 667.0]],
-  "output_size": [1200, 668]
+  "output_size": [1200, 668],
+  "coordinate_space": "undistorted_pixels",
+  "image_point_correction": {
+    "enabled": true,
+    "model": "opencv_fisheye",
+    "calibration_id": "usb_fisheye_1280x720",
+    "image_size": [1280, 720]
+  }
 }
 ```
 
 The matrix example above illustrates structure only. Real values come from the
 detected table.
+
+`source_points` and the homography matrix operate in undistorted pixel space
+when correction is enabled. The correction block saved in the real session
+also contains the matrices needed to reproduce that mapping. Raw table corners
+remain under `table.corners` for original-video annotation.
 
 If homography fails, matrix/point fields are `null` and
 `homography_found` is `false`.
@@ -230,6 +251,11 @@ If homography fails, matrix/point fields are `null` and
     "frame_index": 332,
     "time_seconds": 5.5333,
     "image_position": {"x": 674, "y": 400},
+    "undistorted_image_position": {"x": 661.2, "y": 396.8},
+    "table_position_pixels": {"x": 742.1, "y": 391.5},
+    "table_position_normalized": {"x": 0.619, "y": 0.587},
+    "table_position_mm": {"x": 1696.1, "y": 895.2},
+    "camera_correction_applied": true,
     "active_position_frame_index": 332,
     "active_position_time_seconds": 5.5333,
     "previous_vy": 1916.03,
@@ -246,19 +272,25 @@ If homography fails, matrix/point fields are `null` and
 | `bounce_id` | One-based ID within the session. |
 | `frame_index` / `time_seconds` | Frame/time at which tracker.py confirmed the reversal. |
 | `image_position` | Lowest stored bbox-bottom point from the preceding descent. |
+| `undistorted_image_position` | The same point after fisheye correction. |
+| `table_position_pixels` | Corrected point projected into the top-down table image. |
+| `table_position_normalized` | Table position expressed from 0 to 1 on each table axis. |
+| `table_position_mm` | Table position converted using the physical 2740 by 1525 mm dimensions. |
+| `camera_correction_applied` | Whether the saved calibration was used for this bounce. |
 | `active_position_*` | Compatibility copy of the confirmation frame/time. |
 | `previous_vy` / `current_vy` | Image-space velocities used by the current detector. |
 | `estimated_speed_kmh` | Optional incoming 2D table-plane speed estimate. |
 | `speed_sample_count` | Number of valid pre-bounce segment speeds used. |
 | `speed_method` | Estimation method identifier; currently `pre_bounce_table_plane`. |
+| `speed_camera_correction_applied` | Whether incoming speed samples used the fisheye correction. |
 
 Speed fields are omitted when homography or sufficient valid incoming samples
 are unavailable. They are estimates from a single camera, not full 3D radar
 measurements.
 
 Future temporal bounce detection may add confidence, rejection diagnostics,
-smoothed velocities, direction-change score, and mapped table positions. Schema
-changes should increment `json_version`.
+smoothed velocities, and direction-change score. Schema changes should
+increment `json_version`.
 
 ---
 
@@ -403,27 +435,27 @@ numbers before saving.
 
 ---
 
-## Filename Contract and Known Limitation
+## Filename Contract
 
 Intended default relationship:
 
 ```text
 capture/recordings/gameplay_123.mkv
-capture/recordings/gameplay_123_session.json
+capture/recording_json/gameplay_123_session.json
 review/annotated/annotate_gameplay_123_v2.mkv
 review/heatmaps/heatmap_gameplay_123.png
 ```
 
-Current Training code can use a custom user session name in the JSON filename,
-while Analysis derives the expected JSON path from the recording stem. A custom
-name can therefore cause Analysis to miss the session JSON and skip the merge.
-
-Recommended correction:
+Training and Analysis always derive the JSON filename from the recording stem:
 
 ```text
 Always derive the JSON filename from the recording stem.
 Store the human-friendly session name inside session.session_name.
 ```
+
+When Analysis opens an older video with no corresponding JSON, it creates this
+same structure with `session.session_origin` set to `analysis_only` and empty
+`training_settings`, then merges the analysis results into it.
 
 ---
 

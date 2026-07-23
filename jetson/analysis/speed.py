@@ -9,6 +9,11 @@ import math
 import statistics
 
 try:
+    from homography import map_image_point_with_homography_result
+except ModuleNotFoundError:
+    from analysis.homography import map_image_point_with_homography_result
+
+try:
     import analysis_config
 except ModuleNotFoundError:
     from analysis import analysis_config
@@ -46,8 +51,7 @@ def estimate_pre_bounce_speed(positions, bounce_event, homography_result):
     for position in track_suffix:
         mapped_sample = _map_position_to_table_mm(
             position=position,
-            homography_matrix=matrix,
-            output_size=output_size,
+            homography_result=homography_result,
         )
         if mapped_sample is not None:
             mapped_samples.append(mapped_sample)
@@ -72,6 +76,14 @@ def estimate_pre_bounce_speed(positions, bounce_event, homography_result):
         "estimated_speed_kmh": round(estimated_speed, 2),
         "speed_sample_count": len(filtered_speeds),
         "speed_method": "pre_bounce_table_plane",
+        "speed_camera_correction_applied": bool(
+            isinstance(homography_result, dict)
+            and isinstance(
+                homography_result.get("image_point_correction"),
+                dict,
+            )
+            and homography_result["image_point_correction"].get("enabled")
+        ),
     }
 
 
@@ -179,34 +191,24 @@ def _extract_homography(homography_result):
     return matrix, (float(output_size[0]), float(output_size[1]))
 
 
-def _map_position_to_table_mm(position, homography_matrix, output_size):
+def _map_position_to_table_mm(position, homography_result):
     try:
         image_x = float(position["x"])
         image_y = float(position.get("bbox_bottom_y", position["y"]))
         time_seconds = float(position["time_seconds"])
         frame_index = int(position["frame_index"])
-
-        h00, h01, h02 = [float(value) for value in homography_matrix[0]]
-        h10, h11, h12 = [float(value) for value in homography_matrix[1]]
-        h20, h21, h22 = [float(value) for value in homography_matrix[2]]
+        mapping = map_image_point_with_homography_result(
+            image_x,
+            image_y,
+            homography_result,
+        )
     except (KeyError, TypeError, ValueError, IndexError):
         return None
 
-    denominator = h20 * image_x + h21 * image_y + h22
-    if not math.isfinite(denominator) or abs(denominator) < 1e-9:
+    normalized_x, normalized_y = mapping["table_normalized_point"]
+    if not (0 <= normalized_x < 1 and 0 <= normalized_y < 1):
         return None
-
-    table_x = (h00 * image_x + h01 * image_y + h02) / denominator
-    table_y = (h10 * image_x + h11 * image_y + h12) / denominator
-    width, height = output_size
-
-    if width <= 1 or height <= 1:
-        return None
-    if not (0 <= table_x < width and 0 <= table_y < height):
-        return None
-
-    x_mm = table_x / (width - 1) * TABLE_LENGTH_MM
-    y_mm = table_y / (height - 1) * TABLE_WIDTH_MM
+    x_mm, y_mm = mapping["table_mm_point"]
 
     if not all(math.isfinite(value) for value in (x_mm, y_mm, time_seconds)):
         return None

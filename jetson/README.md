@@ -84,6 +84,14 @@ Current working features:
   * Detect bounce events
   * Generate an annotated video
   * Generate a bounce heatmap
+  * Correct table corners, bounce locations, and speed samples using the saved
+    fisheye camera profile
+* Camera calibration workflow can:
+
+  * Preview the native-resolution fisheye camera from the GUI
+  * Guide checkerboard image capture
+  * Calculate and save an OpenCV fisheye calibration profile
+  * Generate an original/undistorted diagnostic image
 * STM32 serial command path can:
 
   * Build `SETTINGS`, `START`, and `STOP` commands
@@ -258,7 +266,8 @@ project/jetson/
 │       └── bounce_separate_state.py
 │
 ├── capture/
-│   └── recordings/
+│   ├── recordings/       # Video files only
+│   └── recording_json/   # Per-recording session JSON
 │
 ├── models/
 │   ├── v1/
@@ -467,12 +476,12 @@ Current known limitations:
 * Table detection overlay during preview is not implemented yet.
 * STM32 serial sending is connected, but there is no continuous response reader
   feeding `COMPLETE` into the controller.
-* Custom display names can create a session JSON filename that Analysis does not
-  find; the stable filename must come from the recording stem.
+* Session JSON filenames use the recording stem consistently; custom display
+  names are stored inside `session.session_name`.
 * Session JSON is the current structured record, but path portability and schema
   migration still need explicit policies.
-* Review displays JSON-backed metrics and a heatmap, but does not open the
-  annotated video.
+* Review displays JSON-backed metrics and a heatmap and can launch the
+  annotated video through VLC when it is installed.
 * Analysis accuracy depends on:
 
   * table corner detection quality

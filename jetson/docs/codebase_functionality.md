@@ -27,8 +27,10 @@ flowchart LR
 
     TC --> Capture[capture/]
     TC --> Comm[comm/]
-    TC --> Sessions[capture/recordings/<br/>MKV and session JSON]
+    TC --> Videos[capture/recordings/<br/>MKV only]
+    TC --> Sessions[capture/recording_json/<br/>session JSON]
 
+    Videos --> AC
     Sessions --> AC
     AC --> Analysis[analysis/]
     Analysis --> Models[models/]
@@ -236,7 +238,8 @@ analysis/analysis_config.py
 
 | Folder | What it stores |
 | --- | --- |
-| `capture/recordings/` | Raw MKV recordings and their `_session.json` records. |
+| `capture/recordings/` | Raw MKV recordings only. |
+| `capture/recording_json/` | Training and analysis `_session.json` records. |
 | `review/annotated/` | Annotated MKV videos created by analysis. |
 | `review/heatmaps/` | Heatmap PNG images created by analysis. |
 | `json_results/` | Older/parallel analysis-log output; it is not the current Review source. |
@@ -245,7 +248,7 @@ Intended output relationship:
 
 ```text
 capture/recordings/session.mkv
-capture/recordings/session_session.json
+capture/recording_json/session_session.json
 review/annotated/annotate_session.mkv
 review/heatmaps/heatmap_session.png
 ```

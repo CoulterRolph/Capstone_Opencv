@@ -366,7 +366,7 @@ examples, merge behavior, and compatibility rules.
 
 ```mermaid
 flowchart TD
-    ReviewPage[Review page] --> Scan[Scan capture/recordings for _session.json]
+    ReviewPage[Review page] --> Scan[Scan capture/recording_json for _session.json]
     Scan --> Sort[Sort newest first]
     Sort --> Dropdown[Populate session dropdown]
     Dropdown --> Load[Load selected JSON]

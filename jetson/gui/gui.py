@@ -61,6 +61,7 @@ from navigation_page import NavigationPage
 from training_page import TrainingPage
 from analysis_page import AnalysisPage
 from review_page import ReviewPage
+from calibration_page import CalibrationPage
 
 
 # ============================================================
@@ -160,6 +161,11 @@ class TrainingAssistantGui:
             page_manager=self.page_manager,
         )
 
+        calibration_page = CalibrationPage(
+            parent=self.main_container,
+            page_manager=self.page_manager,
+        )
+
         self.page_manager.register_page(
             gui_config.NAVIGATION_PAGE_NAME,
             navigation_page,
@@ -178,6 +184,11 @@ class TrainingAssistantGui:
         self.page_manager.register_page(
             gui_config.REVIEW_PAGE_NAME,
             review_page,
+        )
+
+        self.page_manager.register_page(
+            gui_config.CALIBRATION_PAGE_NAME,
+            calibration_page,
         )
 
     def _show_start_page(self):
@@ -222,6 +233,15 @@ class TrainingAssistantGui:
 
             return
 
+        if self._is_any_calibration_running():
+            messagebox.showwarning(
+                "Calibration Running",
+                "Please wait for camera calibration to finish before closing the app.",
+            )
+
+            return
+
+        self._shutdown_resource_pages()
         self.root.destroy()
 
         # Force process exit to avoid native-library shutdown crashes.
@@ -250,6 +270,28 @@ class TrainingAssistantGui:
             return False
 
         return analysis_page.analysis_controller.is_analysis_running()
+
+    def _shutdown_resource_pages(self):
+        """Give camera-owning pages a chance to release hardware."""
+
+        if self.page_manager is None:
+            return
+        for page in self.page_manager.pages.values():
+            if hasattr(page, "shutdown"):
+                try:
+                    page.shutdown()
+                except Exception:
+                    pass
+
+    def _is_any_calibration_running(self):
+        """Return True while the Calibration page worker is active."""
+
+        if self.page_manager is None:
+            return False
+        page = self.page_manager.pages.get(gui_config.CALIBRATION_PAGE_NAME)
+        if page is None or not hasattr(page, "calibration_controller"):
+            return False
+        return page.calibration_controller.is_calibrating()
 
 
 # ============================================================

@@ -28,6 +28,22 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    from capture.session_paths import (
+        RECORDING_JSON_DIR,
+        build_session_json_path,
+    )
+except ModuleNotFoundError:
+    import sys
+
+    PROJECT_ROOT = Path(__file__).resolve().parents[1]
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from capture.session_paths import (
+        RECORDING_JSON_DIR,
+        build_session_json_path,
+    )
+
 
 # ============================================================
 # Import analysis configuration
@@ -148,7 +164,10 @@ def create_analysis_log(video_path, video_info):
             "source_points": None,
             "destination_points": None,
             "output_size": None,
+            "coordinate_space": "raw_image_pixels",
+            "image_point_correction": None,
         },
+        "camera_calibration": None,
         "bounces": [],
         "summary": {
             "total_bounces": 0,
@@ -237,6 +256,19 @@ def add_homography_to_log(analysis_log, homography_result):
         ),
         "output_size": make_json_safe(
             homography_result.get("output_size")
+        ),
+        "coordinate_space": homography_result.get(
+            "coordinate_space",
+            "raw_image_pixels",
+        ),
+        "raw_corner_points": make_json_safe(
+            homography_result.get("raw_corner_points")
+        ),
+        "corrected_corner_points": make_json_safe(
+            homography_result.get("corner_points")
+        ),
+        "image_point_correction": make_json_safe(
+            homography_result.get("image_point_correction")
         ),
     }
 
@@ -364,28 +396,89 @@ def load_analysis_log(json_path):
 # Session JSON integration (Training + Analysis merged)
 # ============================================================
 
-def build_session_metadata_path(video_path):
+def build_session_metadata_path(video_path, recording_json_dir=None):
     """
-    Build the session metadata JSON path next to the recorded MKV.
+    Build the central session metadata path for a recorded video.
 
     Example:
         Input video:
             capture/recordings/sample_001.mkv
 
         Output JSON path:
-            capture/recordings/sample_001_session.json
+            capture/recording_json/sample_001_session.json
     """
 
+    if recording_json_dir is None:
+        recording_json_dir = RECORDING_JSON_DIR
+    return build_session_json_path(video_path, recording_json_dir)
+
+
+def create_analysis_only_session(video_path, analysis_result=None):
+    """Create the normal session structure for a video imported without JSON."""
+
     video_path = Path(video_path)
-    return video_path.with_name(f"{video_path.stem}_session.json")
+    analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
+    video_info = analysis_result.get("video_info")
+    if not isinstance(video_info, dict):
+        video_info = {}
+
+    try:
+        recording_time = datetime.fromtimestamp(
+            video_path.stat().st_mtime
+        ).astimezone().isoformat(timespec="seconds")
+    except OSError:
+        recording_time = datetime.now().astimezone().isoformat(timespec="seconds")
+
+    return {
+        "session": {
+            "session_name": video_path.stem,
+            "recording_video_path": str(video_path),
+            "recording_time": recording_time,
+            "json_version": "2.0",
+            "session_origin": "analysis_only",
+        },
+        "training_settings": {},
+        "recording_settings": {
+            "camera_device": None,
+            "recording_width": video_info.get("width"),
+            "recording_height": video_info.get("height"),
+            "recording_fps": video_info.get("fps"),
+        },
+        "video": {},
+        "camera_calibration": None,
+        "table": {"table_detected": False, "corners": {}},
+        "homography": {
+            "homography_found": False,
+            "homography_matrix": None,
+            "source_points": None,
+            "destination_points": None,
+            "output_size": None,
+            "coordinate_space": "raw_image_pixels",
+            "image_point_correction": None,
+        },
+        "bounces": [],
+        "ball_tracking": {
+            "summary": {},
+            "recent_positions": [],
+            "active_trail": [],
+        },
+        "summary": {"total_bounces": 0},
+        "quality_flags": {
+            "table_detection_failed": False,
+            "homography_failed": False,
+            "no_bounces_detected": True,
+        },
+        "heatmap": None,
+        "analysis_models": {},
+        "artifacts": {"annotated_video_path": None},
+    }
 
 
 def load_session_log(video_path):
     """
     Load an existing session JSON file.
 
-    This loads the merged training + analysis JSON created by training_controller.py
-    and updated by analysis.
+    This loads the merged Training + Analysis JSON from recording_json/.
 
     Args:
         video_path: Path to the recorded video file.
@@ -460,6 +553,11 @@ def merge_analysis_into_session(
     if "analysis_models" in analysis_result:
         session_log["analysis_models"] = make_json_safe(
             analysis_result["analysis_models"]
+        )
+
+    if "camera_calibration" in analysis_result:
+        session_log["camera_calibration"] = make_json_safe(
+            analysis_result["camera_calibration"]
         )
 
     # Record generated output paths, including the versioned annotated video.
@@ -547,7 +645,7 @@ def save_session_log(session_log, video_path):
 
     session_json_path = build_session_metadata_path(video_path)
 
-    session_json_path.parent.mkdir(parents=True, exist_ok=True)
+    RECORDING_JSON_DIR.mkdir(parents=True, exist_ok=True)
 
     json_safe_log = make_json_safe(session_log)
 

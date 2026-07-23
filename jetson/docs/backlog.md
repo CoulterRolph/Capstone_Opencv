@@ -33,7 +33,7 @@ below them.
 
 - [x] Reconcile system and workflow documentation with the session JSON pipeline.
 - [ ] Run Training → Analysis → Review end to end on the Jetson.
-- [ ] Make Training always write `<recording_stem>_session.json`; keep the custom name only in `session.session_name`.
+- [x] Make Training always write `<recording_stem>_session.json`; keep the custom name only in `session.session_name` (2026-07-19).
 - [ ] Add a direct path-contract test proving Training, Analysis, and Review resolve the same session JSON for blank, custom, and punctuation-heavy display names.
 - [ ] Add STM32 response listener so live `COMPLETE` stops recording automatically without sending `STOP`.
 - [ ] Add a safe hardware test profile that disables real recording and real STM32 writes together; document the exact command before running controller tests.

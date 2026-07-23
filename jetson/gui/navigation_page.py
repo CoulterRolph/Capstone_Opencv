@@ -188,7 +188,7 @@ class NavigationPage(tk.Frame):
 
     def _build_workflow_cards(self, parent):
         """
-        Add the three main workflow cards.
+        Add the main workflow cards.
         """
 
         cards_frame = tk.Frame(
@@ -213,6 +213,11 @@ class NavigationPage(tk.Frame):
         cards_frame.rowconfigure(
             0,
             weight=1,
+        )
+
+        cards_frame.rowconfigure(
+            1,
+            weight=0,
         )
 
         self._create_workflow_card(
@@ -245,6 +250,18 @@ class NavigationPage(tk.Frame):
             command=self._on_review_clicked,
         )
 
+        self._create_workflow_card(
+            parent=cards_frame,
+            column=0,
+            row=1,
+            columnspan=3,
+            title=gui_config.CALIBRATION_CARD_TITLE,
+            body=gui_config.CALIBRATION_CARD_BODY,
+            button_text=gui_config.CALIBRATION_BUTTON_TEXT,
+            button_color=gui_config.CALIBRATION_BUTTON_COLOR,
+            command=self._on_calibration_clicked,
+        )
+
     def _create_workflow_card(
         self,
         parent,
@@ -254,6 +271,8 @@ class NavigationPage(tk.Frame):
         button_text,
         button_color,
         command,
+        row=0,
+        columnspan=1,
     ):
         """
         Create one dashboard-style workflow card.
@@ -267,8 +286,9 @@ class NavigationPage(tk.Frame):
         )
 
         card_frame.grid(
-            row=0,
+            row=row,
             column=column,
+            columnspan=columnspan,
             sticky="nsew",
             padx=10,
             pady=5,
@@ -416,6 +436,13 @@ class NavigationPage(tk.Frame):
             gui_config.REVIEW_PAGE_NAME,
         )
 
+    def _on_calibration_clicked(self):
+        """Navigate to the Camera Calibration page."""
+
+        self.page_manager.show_page(
+            gui_config.CALIBRATION_PAGE_NAME,
+        )
+
 
 # ============================================================
 # Direct test
@@ -485,6 +512,12 @@ def test_navigation_page_direct():
         title="Review Page Placeholder",
     )
 
+    calibration_placeholder = _create_placeholder_page(
+        parent=container,
+        page_manager=page_manager,
+        title="Calibration Page Placeholder",
+    )
+
     page_manager.register_page(
         gui_config.NAVIGATION_PAGE_NAME,
         navigation_page,
@@ -503,6 +536,11 @@ def test_navigation_page_direct():
     page_manager.register_page(
         gui_config.REVIEW_PAGE_NAME,
         review_placeholder,
+    )
+
+    page_manager.register_page(
+        gui_config.CALIBRATION_PAGE_NAME,
+        calibration_placeholder,
     )
 
     page_manager.show_page(

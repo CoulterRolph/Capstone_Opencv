@@ -20,7 +20,7 @@ Review displays the information.
 | `gui/review_page.py` | Select a session, display metrics and its heatmap, and open its annotated video. |
 | `controller/review_controller.py` | Find, load, and interpret session JSON files and launch annotated videos in VLC. |
 | `gui/scrollable_frame.py` | Keep Review usable on the touchscreen. |
-| `capture/recordings/` | Store `_session.json` files beside recorded MKVs. |
+| `capture/recording_json/` | Store all `_session.json` records centrally. |
 | `review/heatmaps/` | Store heatmap images referenced by session JSON. |
 | `review/annotated/` | Store annotated videos opened from Review using VLC. |
 | `gui/review_page_old.py` | Preserved pre-session Review implementation. |
@@ -31,7 +31,7 @@ Review displays the information.
 
 ```mermaid
 flowchart TD
-    Open[User opens Review] --> Scan[ReviewController scans capture/recordings]
+    Open[User opens Review] --> Scan[ReviewController scans capture/recording_json]
     Scan --> Filter[Keep files ending in _session.json]
     Filter --> Sort[Sort newest first]
     Sort --> Dropdown[Populate session dropdown]
@@ -65,12 +65,13 @@ jobs separate makes it possible to redesign Review without rewriting JSON access
 
 ## Session Discovery
 
-`ReviewController.list_available_sessions()` scans `capture/recordings/` and
+`ReviewController.list_available_sessions()` scans `capture/recording_json/` and
 accepts only filenames ending in `_session.json`. Sessions are sorted by file
 modification time, newest first.
 
-The GUI removes `_session` from the displayed dropdown name. Selecting an item
-causes the complete JSON file to be loaded.
+The GUI shows the friendly `session.session_name` together with the recording
+stem when they differ. Selecting an item causes the complete JSON file to be
+loaded. Review refreshes this list whenever the page opens.
 
 ---
 

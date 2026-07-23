@@ -47,6 +47,18 @@ GUI or analysis controller.
 
 File: `analysis/analysis_config.py`
 
+### Camera calibration
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `CAMERA_CALIBRATION_ENABLED` | `True` | Correct table, bounce, and speed points using the fisheye profile. |
+| `CAMERA_CALIBRATION_REQUIRED` | `True` | Fail analysis if the profile is missing, malformed, or resolution-mismatched. |
+| `CAMERA_CALIBRATION_PROFILE_PATH` | `capture/calibration_data/fisheye_1280x720.json` | Profile created by the Calibration GUI. |
+
+Keep correction required for production measurements. Disabling it is useful
+only for controlled before/after comparisons because a raw point cannot be
+passed through a homography built from corrected corners.
+
 ### Model selection
 
 | Setting | Default | Meaning | Safe change procedure |
@@ -327,8 +339,11 @@ File: `controller/analysis_controller_config.py`
 File: `controller/review_controller_config.py`
 
 This file still defines general Review and legacy heatmap/annotated paths.
-Current session discovery scans `capture/recordings/` for `_session.json` files
+Current session discovery scans `capture/recording_json/` for `_session.json` files
 through `controller/review_controller.py`.
+
+The shared `RECORDING_JSON_DIR` and video-stem filename rule are defined in
+`capture/session_paths.py`, then used by Training, Analysis, and Review.
 
 ---
 

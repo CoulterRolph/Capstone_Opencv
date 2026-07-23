@@ -13,7 +13,7 @@ It is responsible for:
 - Sending SETTINGS / START / STOP commands to the STM32 launcher
 - Starting and stopping high-FPS camera recording
 - Saving recordings for later offline analysis
-- Creating the initial session JSON beside the recording
+- Creating the initial session JSON in `capture/recording_json/`
 - Handling future STM32 completion messages
 ```
 
@@ -224,7 +224,7 @@ Those recordings become the input videos for the Analysis page.
 ## Initial Session JSON
 
 After recording starts and its output path is known, `TrainingController` writes
-an initial `_session.json` beside the MKV. This record connects what the user
+an initial `_session.json` in `capture/recording_json/`. This record connects what the user
 requested to the video that captured it.
 
 ```mermaid

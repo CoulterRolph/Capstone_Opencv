@@ -13,7 +13,30 @@ if str(CONTROLLER_DIR) not in sys.path:
 
 
 import review_controller_config
+import review_controller
 from review_controller import ReviewController
+
+
+class ReviewControllerSessionDiscoveryTests(unittest.TestCase):
+    def test_lists_only_central_session_json_files(self):
+        controller = ReviewController()
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            json_directory = Path(temporary_directory) / "recording_json"
+            json_directory.mkdir()
+            expected = json_directory / "video_session.json"
+            expected.write_text("{}", encoding="utf-8")
+            (json_directory / "unrelated.json").write_text("{}", encoding="utf-8")
+            (json_directory / "notes.txt").write_text("ignored", encoding="utf-8")
+
+            with mock.patch.object(
+                review_controller,
+                "RECORDING_JSON_DIR",
+                json_directory,
+            ):
+                found = controller.list_available_sessions()
+
+            self.assertEqual(found, [expected])
 
 
 class ReviewControllerAnnotatedVideoTests(unittest.TestCase):

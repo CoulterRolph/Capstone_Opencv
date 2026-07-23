@@ -58,6 +58,10 @@ class PageManager:
 
         if self.current_page_name is not None:
             current_page = self.pages[self.current_page_name]
+
+            if hasattr(current_page, "on_page_hidden"):
+                current_page.on_page_hidden()
+
             current_page.pack_forget()
 
         next_page = self.pages[page_name]
@@ -66,6 +70,9 @@ class PageManager:
             fill="both",
             expand=True,
         )
+
+        if hasattr(next_page, "on_page_shown"):
+            next_page.on_page_shown()
 
         self.current_page_name = page_name
 

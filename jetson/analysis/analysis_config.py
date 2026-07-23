@@ -38,6 +38,20 @@ CAPTURE_RECORDINGS_DIR = PROJECT_ROOT / "capture" / "recordings"
 
 
 # ============================================================
+# Camera calibration / point correction
+# ============================================================
+
+# Analysis intentionally fails when correction is enabled but the profile is
+# missing or has a different resolution. Silently mixing distorted points with
+# an undistorted homography would produce believable but incorrect locations.
+CAMERA_CALIBRATION_ENABLED = True
+CAMERA_CALIBRATION_REQUIRED = True
+CAMERA_CALIBRATION_PROFILE_PATH = (
+    PROJECT_ROOT / "capture" / "calibration_data" / "fisheye_1280x720.json"
+)
+
+
+# ============================================================
 # Model version selection
 # ============================================================
 

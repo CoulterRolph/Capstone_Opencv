@@ -168,6 +168,24 @@ HEATMAP_OVERLAY_DRAW_LABELS = getattr(
     True,
 )
 
+CAMERA_CALIBRATION_ENABLED = getattr(
+    analysis_config,
+    "CAMERA_CALIBRATION_ENABLED",
+    False,
+)
+
+CAMERA_CALIBRATION_REQUIRED = getattr(
+    analysis_config,
+    "CAMERA_CALIBRATION_REQUIRED",
+    False,
+)
+
+CAMERA_CALIBRATION_PROFILE_PATH = getattr(
+    analysis_config,
+    "CAMERA_CALIBRATION_PROFILE_PATH",
+    PROJECT_ROOT / "capture" / "calibration_data" / "fisheye_1280x720.json",
+)
+
 
 # ============================================================
 # Local analysis imports
@@ -193,7 +211,10 @@ from homography import (
     print_homography_report,
     print_homography_sample_indices,
     seek_video_capture_to_frame,
+    map_image_point_with_homography_result,
 )
+
+from camera_geometry import load_image_point_correction
 
 from ball import (
     load_ball_model,
@@ -1014,6 +1035,7 @@ def emit_analysis_progress(
 def compute_integrated_stable_homography(
     video_capture,
     progress_callback=None,
+    image_point_correction=None,
 ):
     """
     Compute the homography using multiple table detections.
@@ -1049,6 +1071,7 @@ def compute_integrated_stable_homography(
     try:
         homography_result = compute_stable_table_homography(
             detected_tables,
+            image_point_correction=image_point_correction,
         )
 
         print()
@@ -1062,6 +1085,7 @@ def compute_integrated_stable_homography(
 
         homography_result = compute_table_homography(
             detected_table_for_annotation,
+            image_point_correction=image_point_correction,
         )
 
     print_homography_report(
@@ -1076,6 +1100,85 @@ def compute_integrated_stable_homography(
     )
 
     return detected_table_for_annotation, homography_result
+
+
+def load_analysis_image_point_correction(video_info):
+    """Load and validate the calibration profile for the selected video."""
+
+    if not CAMERA_CALIBRATION_ENABLED:
+        print("Camera point correction is disabled.", flush=True)
+        return None
+
+    expected_size = (
+        int(video_info["width"]),
+        int(video_info["height"]),
+    )
+    try:
+        correction = load_image_point_correction(
+            profile_path=CAMERA_CALIBRATION_PROFILE_PATH,
+            expected_image_size=expected_size,
+        )
+    except Exception as error:
+        if CAMERA_CALIBRATION_REQUIRED:
+            raise RuntimeError(
+                "Camera calibration is required but could not be loaded: "
+                f"{error}"
+            ) from error
+        print(
+            f"Warning: camera calibration was not loaded: {error}",
+            flush=True,
+        )
+        return None
+
+    print()
+    print("===========================================", flush=True)
+    print(" Camera Point Correction", flush=True)
+    print("===========================================", flush=True)
+    print(f"Profile: {correction['profile_path']}", flush=True)
+    print(f"Model:   {correction['model']}", flush=True)
+    print(
+        f"Size:    {correction['image_size'][0]}x"
+        f"{correction['image_size'][1]}",
+        flush=True,
+    )
+    print("Status:  enabled", flush=True)
+    print("===========================================", flush=True)
+    print()
+    return correction
+
+
+def attach_bounce_table_coordinates(bounce_event, homography_result):
+    """Attach raw, undistorted, and table coordinates to one bounce event."""
+
+    if not isinstance(bounce_event, dict):
+        return bounce_event
+    try:
+        image_x = float(bounce_event["x"])
+        image_y = float(bounce_event["y"])
+        mapping = map_image_point_with_homography_result(
+            image_x,
+            image_y,
+            homography_result,
+        )
+    except (KeyError, TypeError, ValueError):
+        return bounce_event
+
+    corrected_x, corrected_y = mapping["undistorted_image_point"]
+    table_x, table_y = mapping["table_pixel_point"]
+    normalized_x, normalized_y = mapping["table_normalized_point"]
+    mm_x, mm_y = mapping["table_mm_point"]
+    bounce_event["undistorted_image_position"] = {
+        "x": corrected_x,
+        "y": corrected_y,
+    }
+    bounce_event["table_position_pixels"] = {"x": table_x, "y": table_y}
+    bounce_event["table_position_normalized"] = {
+        "x": normalized_x,
+        "y": normalized_y,
+    }
+    bounce_event["table_position_mm"] = {"x": mm_x, "y": mm_y}
+    bounce_event["camera_correction_applied"] = mapping["correction_applied"]
+    return bounce_event
 
 
 # ============================================================
@@ -1170,6 +1273,8 @@ def run_analysis(
 
         video_capture, video_info = open_and_check_video(selected_video_path)
 
+        image_point_correction = load_analysis_image_point_correction(video_info)
+
         emit_analysis_progress(
             progress_callback=progress_callback,
             stage="video_validated",
@@ -1201,6 +1306,7 @@ def run_analysis(
         detected_table, homography_result = compute_integrated_stable_homography(
             video_capture,
             progress_callback=progress_callback,
+            image_point_correction=image_point_correction,
         )
 
         print_table_object_keypoints(
@@ -1250,6 +1356,7 @@ def run_analysis(
             "video_info": video_info,
             "detected_table": detected_table,
             "homography_result": homography_result,
+            "camera_calibration": image_point_correction,
             "ball_tracking": ball_tracking_result,
             "bounce_tracking": bounce_tracking_result,
             "heatmap": bounce_tracking_result.get("heatmap"),
@@ -1480,6 +1587,10 @@ def process_ball_and_bounce_tracking_for_video(
             )
 
             if bounce_event is not None:
+                attach_bounce_table_coordinates(
+                    bounce_event=bounce_event,
+                    homography_result=homography_result,
+                )
                 attach_speed_estimate(
                     bounce_event=bounce_event,
                     positions=tracker_state["positions"],

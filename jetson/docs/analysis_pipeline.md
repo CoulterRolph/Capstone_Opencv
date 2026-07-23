@@ -52,7 +52,7 @@ Analysis is offline by design. Training records a video first; analysis processe
 flowchart TD
     Recording[Recorded MKV] --> SelectVideo[User selects recording]
     Models[Complete folders in models/] --> SelectModels[User selects model version]
-    SessionBefore[Initial _session.json] --> AnalysisController
+    SessionBefore[Existing _session.json if available] --> AnalysisController
     SelectVideo --> AnalysisPage[gui/analysis_page.py]
     AnalysisPage --> AnalysisController[controller/analysis_controller.py]
     SelectModels --> AnalysisPage
@@ -80,7 +80,7 @@ flowchart TD
     Heatmap --> ReviewHeatmaps[review/heatmaps]
     Result --> AnalysisController
     AnalysisController --> Json[log_json.py<br/>Session JSON merge]
-    Json --> SessionJson[capture/recordings<br/>_session.json]
+    Json --> SessionJson[capture/recording_json<br/>_session.json]
 
     ReviewAnnotated --> ReviewController[Review Controller]
     ReviewHeatmaps --> ReviewController
@@ -146,10 +146,12 @@ The pipeline:
 ```text
 Sample frames from a time window
 Detect table corners on each sample
+Undistort every detected corner with the saved fisheye profile
 Reject invalid or outlier detections
 Compute median/stable corners
 Build one final homography matrix
-Map image coordinates to top-down table coordinates
+Undistort bounce/speed points with the same profile
+Map corrected coordinates to top-down table coordinates
 ```
 
 The configured real table dimensions are:
@@ -218,11 +220,14 @@ One registered bounce per active track
 Bounce-state reset during initialization, challenger switch, and track drop
 ```
 
-The output is a list of bounce events with image-space location and timing data.
+The output records raw image position for annotation, undistorted image
+position, table pixels, normalized table position, physical millimetres, and
+timing data.
 
 When a bounce is confirmed, `analysis/speed.py` uses the recent incoming track
 positions before the reversal frame to estimate speed. Each bbox-bottom point
-is projected through the table homography, converted from table pixels to real
+is first corrected with the same fisheye profile used by the homography, then
+projected through the table homography, converted from table pixels to real
 table millimetres, and divided by video timestamp differences. Invalid table
 mappings, implausible physical speeds, track discontinuities, and isolated
 segment-speed outliers are rejected. A valid bounce records
@@ -297,13 +302,11 @@ It can represent:
 ```
 
 `run_analysis()` returns a Python dictionary. After it completes,
-`AnalysisController` loads the matching `_session.json`, merges the result, and
-saves it. A missing session file or merge error produces a warning so the
-analysis workflow can still complete.
-
-Important current limitation: Training can name the JSON from a custom session
-name, while Analysis derives the expected JSON path from the MKV stem. These
-must be made consistent for reliable end-to-end merging.
+`AnalysisController` loads the matching `_session.json` and merges the result.
+When an older or imported video has no record, the controller creates the same
+schema with empty Training settings and `session_origin: analysis_only` before
+merging. New filenames always use `<recording_stem>_session.json`; friendly
+custom names remain inside `session.session_name`.
 
 ---
 
@@ -385,7 +388,7 @@ review/annotated/
 review/heatmaps/
     heatmap_[recording_name].png
 
-capture/recordings/
+capture/recording_json/
     [recording_name]_session.json
 ```
 

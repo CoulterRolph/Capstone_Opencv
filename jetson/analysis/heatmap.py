@@ -28,6 +28,11 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
+try:
+    from homography import map_image_point_with_homography_result
+except ModuleNotFoundError:
+    from analysis.homography import map_image_point_with_homography_result
+
 
 # ============================================================
 # Real table dimensions
@@ -86,6 +91,10 @@ class MappedBouncePoint:
     image_point:
         Original bounce location in camera image pixels.
 
+    undistorted_image_point:
+        Bounce location after fisheye correction in the homography's source
+        pixel plane.
+
     table_pixel_point:
         Bounce location in homography destination pixels.
 
@@ -100,6 +109,7 @@ class MappedBouncePoint:
     """
 
     image_point: tuple
+    undistorted_image_point: tuple
     table_pixel_point: tuple
     table_mm_point: tuple
     frame_index: int = None
@@ -454,22 +464,28 @@ def add_bounce_event_to_heatmap(
         state.rejected_bounce_points.append(bounce_event)
         return None
 
-    table_pixel_point = transform_image_point_to_table_pixels(
-        image_point=image_point,
-        homography_matrix=homography_matrix,
-    )
+    try:
+        mapping = map_image_point_with_homography_result(
+            point_x=image_point[0],
+            point_y=image_point[1],
+            homography_result=homography_result,
+        )
+    except (TypeError, ValueError):
+        state.rejected_bounce_points.append(bounce_event)
+        return None
+
+    undistorted_image_point = mapping["undistorted_image_point"]
+    table_pixel_point = mapping["table_pixel_point"]
 
     if not point_inside_table_pixels(table_pixel_point, output_size):
         state.rejected_bounce_points.append(bounce_event)
         return None
 
-    table_mm_point = table_pixels_to_real_mm(
-        table_pixel_point=table_pixel_point,
-        output_size=output_size,
-    )
+    table_mm_point = mapping["table_mm_point"]
 
     mapped_bounce_point = MappedBouncePoint(
         image_point=image_point,
+        undistorted_image_point=undistorted_image_point,
         table_pixel_point=table_pixel_point,
         table_mm_point=table_mm_point,
         frame_index=extract_frame_index(bounce_event),

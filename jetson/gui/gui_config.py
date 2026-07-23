@@ -34,6 +34,7 @@ NAVIGATION_PAGE_NAME = "navigation"
 TRAINING_PAGE_NAME = "training"
 ANALYSIS_PAGE_NAME = "analysis"
 REVIEW_PAGE_NAME = "review"
+CALIBRATION_PAGE_NAME = "calibration"
 
 
 # ============================================================
@@ -70,6 +71,7 @@ PRIMARY_BUTTON_COLOR = "#007bff"
 SECONDARY_BUTTON_COLOR = "#6c757d"
 ANALYSIS_BUTTON_COLOR = "#17a2b8"
 REVIEW_BUTTON_COLOR = "#6f42c1"
+CALIBRATION_BUTTON_COLOR = "#d97706"
 WARNING_BUTTON_COLOR = "#f0ad4e"
 SUCCESS_BUTTON_COLOR = "#20c997"
 
@@ -165,6 +167,7 @@ NAVIGATION_SUBTITLE_TEXT = "Setup, analyze, and review table-tennis training ses
 START_TRAINING_BUTTON_TEXT = "Start Training"
 ANALYSIS_BUTTON_TEXT = "Analysis"
 REVIEW_BUTTON_TEXT = "Review"
+CALIBRATION_BUTTON_TEXT = "Camera Calibration"
 
 
 # ============================================================
@@ -187,6 +190,12 @@ REVIEW_CARD_TITLE = "Review"
 REVIEW_CARD_BODY = (
     "Open saved heatmaps, annotated videos, and future feedback "
     "summaries."
+)
+
+CALIBRATION_CARD_TITLE = "Camera Calibration"
+CALIBRATION_CARD_BODY = (
+    "Preview the fisheye camera, capture checkerboard images, and build a "
+    "resolution-specific calibration profile."
 )
 
 

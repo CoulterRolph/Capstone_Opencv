@@ -100,7 +100,7 @@ flowchart TD
 | Communication | `comm/` | Own the Jetson-to-STM32 serial protocol. |
 | Analysis | `analysis/` | Detect the table and ball, calculate homography and bounces, and generate outputs. |
 | Models | `models/` | Store trained YOLO weights. |
-| Persistent data | `capture/recordings/`, `review/` | Store recordings, session JSON, annotated videos, and heatmaps. |
+| Persistent data | `capture/recordings/`, `capture/recording_json/`, `review/` | Store recordings, session JSON, annotated videos, and heatmaps. |
 
 ### Why controllers exist
 
@@ -163,7 +163,7 @@ The user provides:
 - Number of shots
 
 `TrainingController` validates those values, starts recording, sends commands to
-the STM32, and creates an initial `_session.json` beside the MKV recording. The
+the STM32, and creates an initial `_session.json` in `capture/recording_json/`. The
 JSON contains the training and recording settings plus empty analysis fields.
 
 ### Stage 2: Analysis enriches the session
@@ -178,7 +178,7 @@ crashing the GUI.
 
 ### Stage 3: Review reads the session
 
-`ReviewController` scans `capture/recordings/` for `_session.json` files. The
+`ReviewController` scans `capture/recording_json/` for `_session.json` files. The
 Review page loads the selected JSON and displays key metrics. If the JSON
 contains a valid heatmap path, the image is loaded from `review/heatmaps/`.
 
@@ -223,8 +223,8 @@ Training fills the identity and configuration fields. Analysis fills or updates
 the result fields. Review reads the finished structure.
 
 The separate `json_results/` directory belongs to the older analysis-log design.
-The current session flow stores `_session.json` files beside recordings in
-`capture/recordings/`.
+The current session flow keeps video files in `capture/recordings/` and stores
+their `_session.json` records separately in `capture/recording_json/`.
 
 ---
 
