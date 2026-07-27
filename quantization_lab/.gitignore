@@ -1,0 +1,7 @@
+# Runtime data can be large and is intentionally kept out of Git.
+runtime_data/
+
+# Python-generated files.
+__pycache__/
+*.pyc
+*.pyo

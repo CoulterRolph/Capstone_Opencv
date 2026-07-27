@@ -1,0 +1,16 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+kpt_shape: [6, 3]
+flip_idx: [1, 0, 3, 2, 5, 4]
+
+nc: 1
+names: ['table']
+
+roboflow:
+  workspace: constellations
+  project: table-pwlq7
+  version: 11
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/constellations/table-pwlq7/dataset/11
