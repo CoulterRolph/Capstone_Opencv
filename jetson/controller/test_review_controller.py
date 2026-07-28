@@ -38,6 +38,18 @@ class ReviewControllerSessionDiscoveryTests(unittest.TestCase):
 
             self.assertEqual(found, [expected])
 
+    def test_builds_compact_training_session_display_name(self):
+        controller = ReviewController()
+        session_path = Path(
+            "/recording_json/"
+            "gameplay_1280x720_60fps_20260722_142003_session.json"
+        )
+
+        self.assertEqual(
+            controller.get_session_display_name(session_path),
+            "training_20260722_142003",
+        )
+
 
 class ReviewControllerAnnotatedVideoTests(unittest.TestCase):
     def test_returns_none_when_session_has_no_annotated_video(self):

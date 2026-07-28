@@ -35,6 +35,7 @@ from pathlib import Path
 CONTROLLER_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CONTROLLER_DIR.parent
 CAPTURE_DIR = PROJECT_ROOT / "capture"
+ANALYSIS_DIR = PROJECT_ROOT / "analysis"
 
 if str(CONTROLLER_DIR) not in sys.path:
     sys.path.insert(
@@ -56,6 +57,11 @@ try:
     from session_paths import RECORDING_JSON_DIR
 except ImportError:
     RECORDING_JSON_DIR = PROJECT_ROOT / "capture" / "recording_json"
+
+if str(ANALYSIS_DIR) not in sys.path:
+    sys.path.insert(0, str(ANALYSIS_DIR))
+
+from artifact_naming import build_training_session_display_name
 
 
 # ============================================================
@@ -115,6 +121,12 @@ class ReviewController:
         )
 
         return session_paths
+
+    @staticmethod
+    def get_session_display_name(session_path):
+        """Return ``training_YYYYMMDD_HHMMSS`` for the Review dropdown."""
+
+        return build_training_session_display_name(session_path)
 
     def load_session_data(self, session_path):
         """

@@ -134,7 +134,11 @@ def load_table_model(model_path=None):
 
     print(f"Loading table model: {model_path}", flush=True)
 
-    table_model = YOLO(str(model_path))
+    # TensorRT files do not always expose enough information for Ultralytics
+    # to infer the task before predictor setup. Detection is its common
+    # fallback, which produces boxes but no keypoints. Be explicit so .pt and
+    # .engine table models both use pose post-processing.
+    table_model = YOLO(str(model_path), task="pose")
     table_model_path = model_path
 
     print("Table model loaded successfully.", flush=True)
@@ -202,6 +206,15 @@ def get_table_keypoints_from_frame(
     result = results[0]
 
     if result.keypoints is None:
+        if (
+            table_model_path is not None
+            and table_model_path.suffix.lower() == ".engine"
+        ):
+            raise RuntimeError(
+                "The selected TensorRT table model returned detection output "
+                "without pose keypoints. Confirm that the engine was exported "
+                "from a pose model with task='pose'."
+            )
         print("Table model result has no keypoints.", flush=True)
         return None
 

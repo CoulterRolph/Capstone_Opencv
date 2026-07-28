@@ -286,7 +286,9 @@ def load_ball_model(model_path=None):
 
     print(f"Loading ball model: {model_path}", flush=True)
 
-    ball_model = YOLO(str(model_path))
+    # Explicit task selection is important for TensorRT engines because their
+    # filename/metadata is not always enough for reliable task inference.
+    ball_model = YOLO(str(model_path), task="detect")
     ball_model_path = model_path
 
     print("Ball model loaded successfully.", flush=True)

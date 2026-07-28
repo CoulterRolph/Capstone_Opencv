@@ -104,6 +104,53 @@ class SpeedJsonMergeTests(unittest.TestCase):
             95.0,
         )
 
+    def test_trajectory_diagnostics_accompany_authoritative_bounces(self):
+        trajectory_bounce = {
+            "bounce_id": 1,
+            "frame_index": 20,
+            "detector": "full_trajectory",
+        }
+        diagnostics = {
+            "mode": "authoritative",
+            "authoritative_detector": "full_trajectory",
+            "summary": {
+                "trajectory_table_valid_count": 2,
+            },
+            "report_path": "trajectory_report.json",
+        }
+        session_log = {
+            "bounces": [],
+            "summary": {"total_bounces": 0},
+            "quality_flags": {"no_bounces_detected": True},
+            "trajectory_bounce_comparison": {
+                "mode": "comparison_only",
+            },
+            "ball_tracking": {
+                "summary": {},
+                "recent_positions": [],
+                "active_trail": [],
+            },
+        }
+
+        merged = merge_analysis_into_session(
+            session_log,
+            {
+                "bounce_tracking": {
+                    "bounce_events": [trajectory_bounce],
+                    "summary": {"total_bounces": 1},
+                    "trajectory_analysis": diagnostics,
+                },
+            },
+        )
+
+        self.assertEqual(merged["bounces"], [trajectory_bounce])
+        self.assertEqual(merged["summary"]["total_bounces"], 1)
+        self.assertEqual(
+            merged["trajectory_bounce_analysis"],
+            diagnostics,
+        )
+        self.assertNotIn("trajectory_bounce_comparison", merged)
+
 
 if __name__ == "__main__":
     unittest.main()

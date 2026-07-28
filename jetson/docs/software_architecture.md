@@ -287,12 +287,12 @@ directly.
 `BALL_ANALYSIS_MAX_FRAMES` is currently `None`, so the configured pipeline is no
 longer limited to the earlier 600-frame test window.
 
-Both YOLO models currently use `DEFAULT_MODEL_VERSION = "v2"`. The table and
-ball paths have separate version selectors in `analysis_config.py`, allowing
-the two model types to use different version folders in future experiments.
-The current Analysis page presents one dropdown and applies that selection to
-both models. Annotated output names include the model tag, for example
-`annotate_sample_001_v2.mkv`.
+Both YOLO models default to the v2 PyTorch files, but the Analysis page now
+selects concrete table and ball artifacts independently. Discovery includes
+`.pt` files below `jetson/models/` and `.engine` files produced by the sibling
+quantization lab. The controller captures both exact paths before starting the
+worker. Annotated outputs include artifact/format tags, and every run saves an
+immutable benchmark JSON plus a per-video comparison CSV.
 
 ---
 

@@ -69,9 +69,10 @@ jobs separate makes it possible to redesign Review without rewriting JSON access
 accepts only filenames ending in `_session.json`. Sessions are sorted by file
 modification time, newest first.
 
-The GUI shows the friendly `session.session_name` together with the recording
-stem when they differ. Selecting an item causes the complete JSON file to be
-loaded. Review refreshes this list whenever the page opens.
+The GUI shows each entry as `training_[date]_[six-digit video number]`, for
+example `training_20260722_142003`. The real session JSON path stays in the
+internal lookup. Selecting an item causes the complete JSON file to be loaded.
+Review refreshes this list whenever the page opens.
 
 ---
 

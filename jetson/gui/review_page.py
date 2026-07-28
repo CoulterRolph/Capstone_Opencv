@@ -603,20 +603,9 @@ class ReviewPage(tk.Frame):
         session_names = []
 
         for session_path in session_paths:
-            video_stem = session_path.stem.replace("_session", "")
-            session_name = video_stem
-
-            try:
-                session_data = self.review_controller.load_session_data(
-                    session_path
-                )
-                friendly_name = str(
-                    session_data.get("session", {}).get("session_name", "")
-                ).strip()
-                if friendly_name and friendly_name != video_stem:
-                    session_name = f"{friendly_name} — {video_stem}"
-            except Exception:
-                session_name = video_stem
+            session_name = self.review_controller.get_session_display_name(
+                session_path
+            )
 
             # Preserve access if two files happen to have the same label.
             if session_name in self.session_paths_by_name:

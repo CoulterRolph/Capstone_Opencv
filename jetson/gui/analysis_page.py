@@ -91,12 +91,16 @@ class AnalysisPage(tk.Frame):
 
         self.recording_paths_by_name = {}
         self.selected_recording_name = tk.StringVar()
-        self.selected_model_version = tk.StringVar()
+        self.table_model_paths_by_label = {}
+        self.ball_model_paths_by_label = {}
+        self.selected_table_model = tk.StringVar()
+        self.selected_ball_model = tk.StringVar()
         self.analysis_progress_value = tk.DoubleVar(value=0.0)
 
         self.status_label = None
         self.recording_dropdown = None
-        self.model_version_dropdown = None
+        self.table_model_dropdown = None
+        self.ball_model_dropdown = None
         self.refresh_recordings_button = None
         self.start_analysis_button = None
         self.back_button = None
@@ -117,7 +121,7 @@ class AnalysisPage(tk.Frame):
         self._configure_ttk_style()
         self._build_page()
         self._load_recording_dropdown()
-        self._load_model_version_dropdown()
+        self._load_model_dropdowns()
         self._load_previous_analysis_for_selected_recording()
         self._start_message_polling()
 
@@ -319,7 +323,7 @@ class AnalysisPage(tk.Frame):
 
         model_label = tk.Label(
             model_frame,
-            text="Model Version:",
+            text="Table Model (.pt or .engine):",
             font=gui_config.LABEL_FONT,
             bg=gui_config.PANEL_BACKGROUND_COLOR,
             fg=gui_config.TEXT_ON_DARK_PRIMARY,
@@ -330,17 +334,35 @@ class AnalysisPage(tk.Frame):
             pady=(0, 6),
         )
 
-        self.model_version_dropdown = ttk.Combobox(
+        self.table_model_dropdown = ttk.Combobox(
             model_frame,
-            textvariable=self.selected_model_version,
-            width=12,
+            textvariable=self.selected_table_model,
+            width=42,
             state="readonly",
             style="TCubed.TCombobox",
         )
 
-        self.model_version_dropdown.pack(
+        self.table_model_dropdown.pack(
             anchor="w",
         )
+
+        ball_model_label = tk.Label(
+            model_frame,
+            text="Ball Model (.pt or .engine):",
+            font=gui_config.LABEL_FONT,
+            bg=gui_config.PANEL_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_DARK_PRIMARY,
+        )
+        ball_model_label.pack(anchor="w", pady=(10, 6))
+
+        self.ball_model_dropdown = ttk.Combobox(
+            model_frame,
+            textvariable=self.selected_ball_model,
+            width=42,
+            state="readonly",
+            style="TCubed.TCombobox",
+        )
+        self.ball_model_dropdown.pack(anchor="w")
 
         recording_frame = tk.Frame(
             selection_panel,
@@ -676,7 +698,11 @@ class AnalysisPage(tk.Frame):
         recording_names = []
 
         for recording_path in recording_paths:
-            recording_name = recording_path.name
+            recording_name = (
+                self.analysis_controller.get_recording_display_name(
+                    recording_path
+                )
+            )
             self.recording_paths_by_name[recording_name] = recording_path
 
             recording_names.append(
@@ -768,30 +794,84 @@ class AnalysisPage(tk.Frame):
         }
         self._render_progress_display()
 
-    def _load_model_version_dropdown(self):
-        """Load complete version folders and select the configured default."""
+    def _model_label(self, model_path):
+        """Build a compact model-size, precision, and format label."""
 
-        model_versions = self.analysis_controller.list_available_model_versions()
-        self.model_version_dropdown["values"] = model_versions
+        return self.analysis_controller.get_model_display_label(model_path)
 
-        if not model_versions:
-            self.selected_model_version.set("")
+    def _build_model_label_map(self, model_paths):
+        """Keep compact labels unique if two equivalent exports are present."""
+
+        paths_by_label = {}
+        duplicate_counts = {}
+        for model_path in model_paths:
+            base_label = self._model_label(model_path)
+            duplicate_counts[base_label] = (
+                duplicate_counts.get(base_label, 0) + 1
+            )
+            duplicate_number = duplicate_counts[base_label]
+            label = (
+                base_label
+                if duplicate_number == 1
+                else f"{base_label} ({duplicate_number})"
+            )
+            paths_by_label[label] = model_path
+        return paths_by_label
+
+    def _load_model_dropdowns(self):
+        """Discover concrete PyTorch and TensorRT files for both model roles."""
+
+        table_paths = self.analysis_controller.list_available_models("table")
+        ball_paths = self.analysis_controller.list_available_models("ball")
+        self.table_model_paths_by_label = self._build_model_label_map(
+            table_paths
+        )
+        self.ball_model_paths_by_label = self._build_model_label_map(
+            ball_paths
+        )
+        table_labels = list(self.table_model_paths_by_label)
+        ball_labels = list(self.ball_model_paths_by_label)
+        self.table_model_dropdown["values"] = table_labels
+        self.ball_model_dropdown["values"] = ball_labels
+
+        if not table_labels or not ball_labels:
+            self.selected_table_model.set("")
+            self.selected_ball_model.set("")
             self._append_log_message(
-                "No complete model-version folders were found in models/."
+                "A table and ball .pt/.engine model are both required."
             )
             return
 
-        default_version = self.analysis_controller.get_default_model_version()
-
-        if default_version not in model_versions:
-            default_version = model_versions[-1]
-
-        self.selected_model_version.set(default_version)
-        self._append_log_message(
-            f"Available model versions: {', '.join(model_versions)}"
+        defaults = self.analysis_controller.get_default_model_paths()
+        default_table_label = next(
+            (
+                label
+                for label, path in self.table_model_paths_by_label.items()
+                if path == defaults["table"]
+            ),
+            table_labels[0],
+        )
+        default_ball_label = next(
+            (
+                label
+                for label, path in self.ball_model_paths_by_label.items()
+                if path == defaults["ball"]
+            ),
+            ball_labels[0],
+        )
+        self.selected_table_model.set(
+            default_table_label
+        )
+        self.selected_ball_model.set(
+            default_ball_label
+        )
+        engine_count = sum(
+            path.suffix.lower() == ".engine"
+            for path in table_paths + ball_paths
         )
         self._append_log_message(
-            f"Selected model version: {default_version}"
+            f"Loaded {len(table_paths)} table and {len(ball_paths)} ball models "
+            f"({engine_count} TensorRT engines)."
         )
 
     # --------------------------------------------------------
@@ -827,7 +907,7 @@ class AnalysisPage(tk.Frame):
         )
 
         self._load_recording_dropdown()
-        self._load_model_version_dropdown()
+        self._load_model_dropdowns()
         self._load_previous_analysis_for_selected_recording()
 
     def _on_start_analysis_clicked(self):
@@ -843,7 +923,14 @@ class AnalysisPage(tk.Frame):
             return
 
         selected_recording_path = self._get_selected_recording_path()
-        selected_model_version = self.selected_model_version.get().strip()
+        selected_table_label = self.selected_table_model.get().strip()
+        selected_ball_label = self.selected_ball_model.get().strip()
+        selected_table_path = self.table_model_paths_by_label.get(
+            selected_table_label
+        )
+        selected_ball_path = self.ball_model_paths_by_label.get(
+            selected_ball_label
+        )
 
         if selected_recording_path is None:
             messagebox.showwarning(
@@ -857,20 +944,20 @@ class AnalysisPage(tk.Frame):
 
             return
 
-        if not selected_model_version:
+        if selected_table_path is None or selected_ball_path is None:
             messagebox.showwarning(
-                "No Model Version Selected",
-                "Select a model version before starting analysis.",
+                "Models Not Selected",
+                "Select both a table model and a ball model.",
             )
             self._append_log_message(
-                "Start Analysis blocked because no model version is selected."
+                "Start Analysis blocked because both models are required."
             )
             return
 
         analysis_started = self.analysis_controller.start_analysis(
             video_path=selected_recording_path,
-            table_model_version=selected_model_version,
-            ball_model_version=selected_model_version,
+            table_model_path=selected_table_path,
+            ball_model_path=selected_ball_path,
         )
 
         if not analysis_started:
@@ -881,7 +968,10 @@ class AnalysisPage(tk.Frame):
             return
 
         self._reset_analysis_progress(
-            model_label=selected_model_version,
+            model_label=(
+                f"table={selected_table_path.name} "
+                f"ball={selected_ball_path.name}"
+            ),
         )
 
         self._set_status(
@@ -895,7 +985,7 @@ class AnalysisPage(tk.Frame):
 
         self._append_log_message(
             f"Start Analysis clicked: {selected_recording_path.name}; "
-            f"models={selected_model_version}"
+            f"table={selected_table_path.name}; ball={selected_ball_path.name}"
         )
 
     # --------------------------------------------------------
@@ -1066,9 +1156,42 @@ class AnalysisPage(tk.Frame):
             "Analysis result summary:"
         )
 
-        for key, value in analysis_result.items():
+        benchmark = analysis_result.get("benchmark", {})
+        ball_benchmark = benchmark.get("ball", {})
+        models = analysis_result.get("analysis_models", {})
+        artifacts = analysis_result.get("artifacts", {})
+        summary_lines = [
+            (
+                "  Models: "
+                f"table={Path(models.get('table_model_path', '')).name} "
+                f"({models.get('table_precision', models.get('table_format', '?'))}), "
+                f"ball={Path(models.get('ball_model_path', '')).name} "
+                f"({models.get('ball_precision', models.get('ball_format', '?'))})"
+            ),
+            (
+                "  Ball inference: "
+                f"mean={ball_benchmark.get('mean_inference_ms', 0):.2f} ms, "
+                f"p95={ball_benchmark.get('p95_inference_ms', 0):.2f} ms, "
+                f"model FPS={ball_benchmark.get('model_fps', 0):.2f}"
+            ),
+            (
+                "  Full frame pass: "
+                f"{ball_benchmark.get('end_to_end_fps', 0):.2f} FPS"
+            ),
+            (
+                "  Total analysis: "
+                f"{benchmark.get('total_analysis_seconds', 0):.2f} seconds"
+            ),
+            f"  Annotated video: {artifacts.get('annotated_video_path')}",
+            f"  Benchmark JSON: {artifacts.get('benchmark_report_path')}",
+            (
+                "  Comparison CSV: "
+                f"{artifacts.get('benchmark_comparison_csv_path')}"
+            ),
+        ]
+        for summary_line in summary_lines:
             self._append_log_message(
-                f"  {key}: {value}"
+                summary_line
             )
 
     # --------------------------------------------------------
@@ -1267,7 +1390,11 @@ class AnalysisPage(tk.Frame):
             state=dropdown_state,
         )
 
-        self.model_version_dropdown.config(
+        self.table_model_dropdown.config(
+            state=dropdown_state,
+        )
+
+        self.ball_model_dropdown.config(
             state=dropdown_state,
         )
 

@@ -23,6 +23,7 @@ Later integration steps:
 # ============================================================
 
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -89,7 +90,18 @@ ANNOTATION_DRAW_BALL = analysis_config.ANNOTATION_DRAW_BALL
 ANNOTATION_DRAW_ACTIVE_BALL = analysis_config.ANNOTATION_DRAW_ACTIVE_BALL
 ANNOTATION_DRAW_BALL_TRAIL = analysis_config.ANNOTATION_DRAW_BALL_TRAIL
 ANNOTATION_DRAW_BOUNCES = analysis_config.ANNOTATION_DRAW_BOUNCES
+TRAJECTORY_BOUNCE_AUTHORITATIVE = getattr(
+    analysis_config,
+    "TRAJECTORY_BOUNCE_AUTHORITATIVE",
+    True,
+)
 ANNOTATION_DRAW_LAUNCH_REGION = analysis_config.ANNOTATION_DRAW_LAUNCH_REGION
+
+ANNOTATED_TRAJECTORY_SUFFIX = getattr(
+    analysis_config,
+    "ANNOTATED_TRAJECTORY_SUFFIX",
+    "_trajectory_bounces",
+)
 
 BALL_LAUNCH_X_MIN_FRAC = analysis_config.BALL_LAUNCH_X_MIN_FRAC
 BALL_LAUNCH_X_MAX_FRAC = analysis_config.BALL_LAUNCH_X_MAX_FRAC
@@ -186,6 +198,18 @@ CAMERA_CALIBRATION_PROFILE_PATH = getattr(
     PROJECT_ROOT / "capture" / "calibration_data" / "fisheye_1280x720.json",
 )
 
+TRAJECTORY_BOUNCE_ENABLED = getattr(
+    analysis_config,
+    "TRAJECTORY_BOUNCE_ENABLED",
+    True,
+)
+
+TRAJECTORY_BOUNCE_REPORT_DIR = getattr(
+    analysis_config,
+    "TRAJECTORY_BOUNCE_REPORT_DIR",
+    PROJECT_ROOT / "json_results" / "trajectory_bounce_reports",
+)
+
 
 # ============================================================
 # Local analysis imports
@@ -225,29 +249,38 @@ from ball import (
     get_ball_tracking_summary,
 )
 
-from bounce import (
-    create_bounce_state,
-    sync_bounce_state_from_tracker,
-    print_bounce_event,
-    print_bounce_summary,
-    get_bounce_summary,
-)
-
 from speed import (
     attach_speed_estimate,
     summarize_bounce_speeds,
 )
 
+from trajectory_bounce import (
+    build_trajectory_config,
+    create_trajectory_bounce_state,
+    observe_trajectory_frame,
+    finalize_trajectory_bounce_state,
+    build_speed_positions_from_trajectory_samples,
+    build_trajectory_report_path,
+    save_trajectory_report,
+)
+
 from annotate import (
     build_annotated_video_path,
+    build_trajectory_comparison_video_path,
     create_annotated_video_writer,
     release_annotated_video_writer,
     annotate_frame,
 )
 
 from model_selection import (
+    ModelArtifactSelection,
     ModelSelection,
     resolve_model_selection,
+)
+from benchmark_report import (
+    rebuild_comparison_csv,
+    save_analysis_benchmark,
+    summarize_frame_inference,
 )
 
 
@@ -364,6 +397,53 @@ def release_annotation_writer_if_needed(annotated_video_writer, annotated_video_
     print()
 
 
+def run_trajectory_annotation_worker(
+    source_video_path,
+    trajectory_report_path,
+):
+    """Render authoritative bounce markers in an isolated native process."""
+
+    source_video_path = Path(source_video_path)
+    output_video_path = build_trajectory_comparison_video_path(
+        annotated_video_path=source_video_path,
+        suffix=ANNOTATED_TRAJECTORY_SUFFIX,
+    )
+    worker_path = ANALYSIS_DIR / "trajectory_annotation_worker.py"
+    command = [
+        sys.executable,
+        str(worker_path),
+        "--source",
+        str(source_video_path),
+        "--report",
+        str(trajectory_report_path),
+        "--output",
+        str(output_video_path),
+        "--codec",
+        str(ANNOTATED_VIDEO_CODEC),
+        "--progress-interval",
+        str(ANNOTATION_PROGRESS_INTERVAL_FRAMES),
+    ]
+    completed_process = subprocess.run(
+        command,
+        check=False,
+    )
+    if completed_process.returncode != 0:
+        raise RuntimeError(
+            "trajectory annotation worker exited with status "
+            f"{completed_process.returncode}"
+        )
+    if not output_video_path.is_file() or output_video_path.stat().st_size <= 0:
+        raise RuntimeError(
+            "trajectory annotation worker did not produce a valid video"
+        )
+
+    # The second pass is the authoritative annotated artifact. Atomically
+    # replace the temporary first pass so the exported filename continues to
+    # follow the public naming convention without an internal suffix.
+    output_video_path.replace(source_video_path)
+    return source_video_path
+
+
 def get_launch_region_bottom_from_table(detected_table, frame_height):
     """Return the average detected net-post y, or None when unavailable."""
 
@@ -430,6 +510,7 @@ def write_annotated_frame_if_enabled(
     bounce_cooldown=0,
     heatmap_state=None,
     homography_output_size=None,
+    draw_bounces_override=None,
 ):
     """
     Draw annotations onto the current frame and save it.
@@ -443,6 +524,12 @@ def write_annotated_frame_if_enabled(
 
     if annotated_video_writer is None:
         return
+
+    draw_bounces = (
+        ANNOTATION_DRAW_BOUNCES
+        if draw_bounces_override is None
+        else bool(draw_bounces_override)
+    )
 
     annotated_frame = annotate_frame(
         frame=frame,
@@ -464,7 +551,7 @@ def write_annotated_frame_if_enabled(
         draw_ball=ANNOTATION_DRAW_BALL,
         draw_active_ball=ANNOTATION_DRAW_ACTIVE_BALL,
         draw_ball_trail=ANNOTATION_DRAW_BALL_TRAIL,
-        draw_bounces=ANNOTATION_DRAW_BOUNCES,
+        draw_bounces=draw_bounces,
         draw_launch_region=ANNOTATION_DRAW_LAUNCH_REGION,
     )
 
@@ -1181,6 +1268,166 @@ def attach_bounce_table_coordinates(bounce_event, homography_result):
     return bounce_event
 
 
+def attach_trajectory_table_validation(report, homography_result):
+    """Map experimental contacts and separate on-table from rejected points."""
+
+    table_valid_events = []
+    table_rejected_events = []
+
+    for event in report.get("accepted_events", []):
+        try:
+            mapping = map_image_point_with_homography_result(
+                event["x"],
+                event["y"],
+                homography_result,
+            )
+            corrected_x, corrected_y = mapping["undistorted_image_point"]
+            table_x, table_y = mapping["table_pixel_point"]
+            normalized_x, normalized_y = mapping["table_normalized_point"]
+            mm_x, mm_y = mapping["table_mm_point"]
+            event["undistorted_image_position"] = {
+                "x": corrected_x,
+                "y": corrected_y,
+            }
+            event["table_position_pixels"] = {
+                "x": table_x,
+                "y": table_y,
+            }
+            event["table_position_normalized"] = {
+                "x": normalized_x,
+                "y": normalized_y,
+            }
+            event["table_position_mm"] = {"x": mm_x, "y": mm_y}
+            event["camera_correction_applied"] = mapping[
+                "correction_applied"
+            ]
+            event["table_valid"] = (
+                0.0 <= normalized_x <= 1.0
+                and 0.0 <= normalized_y <= 1.0
+            )
+            if event["table_valid"]:
+                table_valid_events.append(event)
+            else:
+                event["table_validation_reason"] = "outside_table"
+                table_rejected_events.append(event)
+        except Exception as error:
+            event["table_valid"] = False
+            event["table_validation_reason"] = "mapping_failed"
+            event["table_mapping_error"] = str(error)
+            table_rejected_events.append(event)
+
+    report["table_valid_events"] = table_valid_events
+    report["table_rejected_events"] = table_rejected_events
+    report["summary"]["trajectory_table_valid_count"] = len(
+        table_valid_events
+    )
+    report["summary"]["trajectory_table_rejected_count"] = len(
+        table_rejected_events
+    )
+    return report
+
+
+def build_authoritative_trajectory_events(report, homography_result):
+    """Convert table-valid trajectory contacts into the normal bounce schema."""
+
+    samples_by_segment = {
+        int(segment["segment_id"]): (
+            build_speed_positions_from_trajectory_samples(
+                segment.get("trajectory_samples", [])
+            )
+        )
+        for segment in report.get("segments", [])
+    }
+    bounce_events = []
+
+    for bounce_id, trajectory_event in enumerate(
+        report.get("table_valid_events", []),
+        start=1,
+    ):
+        event = dict(trajectory_event)
+        event["bounce_id"] = bounce_id
+        event["detector"] = "full_trajectory"
+        event["frame"] = int(event["frame_index"])
+        event["active_position_frame_index"] = int(event["frame_index"])
+        event["active_position_time_seconds"] = float(
+            event["time_seconds"]
+        )
+        event["previous_vy"] = float(event["incoming_vy_px_s"])
+        event["current_vy"] = float(event["outgoing_vy_px_s"])
+
+        attach_speed_estimate(
+            bounce_event=event,
+            positions=samples_by_segment.get(int(event["segment_id"]), []),
+            homography_result=homography_result,
+        )
+        bounce_events.append(event)
+
+    return bounce_events
+
+
+def print_authoritative_trajectory_summary(bounce_events, report_path):
+    """Print the bounce result now used by every downstream consumer."""
+
+    print()
+    print("===========================================", flush=True)
+    print(" Trajectory Bounce Summary", flush=True)
+    print("===========================================", flush=True)
+    print("Authoritative detector: full trajectory", flush=True)
+    print(f"Total bounces: {len(bounce_events)}", flush=True)
+    for event in bounce_events:
+        print(
+            f"B{event['bounce_id']}: frame={event['frame_index']}, "
+            f"time={event['time_seconds']:.3f}s, "
+            f"type={event['candidate_type']}",
+            flush=True,
+        )
+    print(f"Detailed report: {report_path}", flush=True)
+    print("===========================================", flush=True)
+    print()
+
+
+def finalize_authoritative_trajectory(
+    trajectory_bounce_state,
+    homography_result,
+    video_path,
+    model_version_tag=None,
+):
+    """Finalize trajectory contacts and build authoritative bounce events."""
+
+    report = finalize_trajectory_bounce_state(trajectory_bounce_state)
+    attach_trajectory_table_validation(
+        report=report,
+        homography_result=homography_result,
+    )
+    bounce_events = build_authoritative_trajectory_events(
+        report=report,
+        homography_result=homography_result,
+    )
+    report["authoritative_bounce_events"] = bounce_events
+    report["summary"]["total_bounces"] = len(bounce_events)
+    report_path = build_trajectory_report_path(
+        video_path=video_path,
+        output_dir=TRAJECTORY_BOUNCE_REPORT_DIR,
+        model_version_tag=model_version_tag,
+    )
+    save_trajectory_report(
+        report=report,
+        output_path=report_path,
+    )
+    print_authoritative_trajectory_summary(
+        bounce_events=bounce_events,
+        report_path=report_path,
+    )
+
+    diagnostic_summary = {
+        "mode": report["mode"],
+        "authoritative_detector": report["authoritative_detector"],
+        "summary": report["summary"],
+        "report_path": str(report_path),
+    }
+    return diagnostic_summary, bounce_events
+
+
 # ============================================================
 # Main analysis function
 # ============================================================
@@ -1189,6 +1436,8 @@ def run_analysis(
     video_path=None,
     table_model_version=None,
     ball_model_version=None,
+    table_model_path=None,
+    ball_model_path=None,
     progress_callback=None,
 ):
     """
@@ -1212,6 +1461,10 @@ def run_analysis(
         ball_model_version:
             Optional ball-model folder version. Defaults to the table version.
 
+        table_model_path / ball_model_path:
+            Optional concrete ``.pt`` or ``.engine`` files. When supplied,
+            these take precedence over the legacy version-folder arguments.
+
         progress_callback:
             Optional callable that receives structured progress dictionaries.
             GUI callers use this to update progress without parsing terminal text.
@@ -1229,21 +1482,31 @@ def run_analysis(
         default_video_path=DEFAULT_RECORDING_PATH,
     )
 
-    if table_model_version is None:
-        table_model_version = analysis_config.TABLE_MODEL_VERSION
-
-    if ball_model_version is None:
-        ball_model_version = table_model_version
-
-    model_selection = ModelSelection(
-        table_version=table_model_version,
-        ball_version=ball_model_version,
-    )
-
-    model_paths = resolve_model_selection(
-        models_dir=analysis_config.MODELS_DIR,
-        selection=model_selection,
-    )
+    version_selection = None
+    if table_model_path is not None or ball_model_path is not None:
+        if table_model_path is None or ball_model_path is None:
+            raise ValueError("Both table_model_path and ball_model_path are required.")
+        model_selection = ModelArtifactSelection(
+            table_path=table_model_path,
+            ball_path=ball_model_path,
+        )
+    else:
+        if table_model_version is None:
+            table_model_version = analysis_config.TABLE_MODEL_VERSION
+        if ball_model_version is None:
+            ball_model_version = table_model_version
+        version_selection = ModelSelection(
+            table_version=table_model_version,
+            ball_version=ball_model_version,
+        )
+        model_paths = resolve_model_selection(
+            models_dir=analysis_config.MODELS_DIR,
+            selection=version_selection,
+        )
+        model_selection = ModelArtifactSelection(
+            table_path=model_paths["table"],
+            ball_path=model_paths["ball"],
+        )
 
     emit_analysis_progress(
         progress_callback=progress_callback,
@@ -1258,10 +1521,10 @@ def run_analysis(
     print(" Starting Analysis", flush=True)
     print("===========================================", flush=True)
     print(f"Selected video: {selected_video_path}", flush=True)
-    print(f"Table model version: {model_selection.table_version}", flush=True)
-    print(f"Table model path: {model_paths['table']}", flush=True)
-    print(f"Ball model version: {model_selection.ball_version}", flush=True)
-    print(f"Ball model path: {model_paths['ball']}", flush=True)
+    print(f"Table model: {model_selection.table_path}", flush=True)
+    print(f"Table runtime: {model_selection.table_format}", flush=True)
+    print(f"Ball model: {model_selection.ball_path}", flush=True)
+    print(f"Ball runtime: {model_selection.ball_format}", flush=True)
 
     video_capture = None
     analysis_result = None
@@ -1299,15 +1562,15 @@ def run_analysis(
             message="Detecting table.",
         )
 
-        load_table_model(
-            model_path=model_paths["table"],
-        )
+        table_stage_start = time.perf_counter()
+        load_table_model(model_path=model_selection.table_path)
 
         detected_table, homography_result = compute_integrated_stable_homography(
             video_capture,
             progress_callback=progress_callback,
             image_point_correction=image_point_correction,
         )
+        table_stage_seconds = time.perf_counter() - table_stage_start
 
         print_table_object_keypoints(
             detected_table,
@@ -1342,8 +1605,8 @@ def run_analysis(
             detected_table=detected_table,
             homography_result=homography_result,
             max_frames=BALL_ANALYSIS_MAX_FRAMES,
-            ball_model_path=model_paths["ball"],
-            model_version_tag=model_selection.output_tag,
+            ball_model_path=model_selection.ball_path,
+            model_version_tag=model_selection.annotation_tag,
             progress_callback=progress_callback,
         )
 
@@ -1362,8 +1625,15 @@ def run_analysis(
             "heatmap": bounce_tracking_result.get("heatmap"),
             "analysis_models": {
                 **model_selection.to_dict(),
-                "table_model_path": str(model_paths["table"]),
-                "ball_model_path": str(model_paths["ball"]),
+                **(
+                    version_selection.to_dict()
+                    if version_selection is not None
+                    else {}
+                ),
+            },
+            "benchmark": {
+                "table_homography_seconds": round(table_stage_seconds, 4),
+                "ball": ball_tracking_result.get("benchmark", {}),
             },
             "artifacts": {
                 "annotated_video_path": (
@@ -1410,6 +1680,30 @@ def run_analysis(
             analysis_result["analysis_processing_time_seconds"] = (
                 analysis_processing_time_seconds
             )
+            benchmark = analysis_result.setdefault("benchmark", {})
+            benchmark["total_analysis_seconds"] = (
+                analysis_processing_time_seconds
+            )
+            benchmark["video_path"] = str(selected_video_path)
+            benchmark["models"] = analysis_result.get("analysis_models", {})
+            benchmark_report_path = save_analysis_benchmark(
+                report=benchmark,
+                output_dir=analysis_config.BENCHMARK_REPORT_DIR,
+                video_path=selected_video_path,
+                output_tag=model_selection.output_tag,
+            )
+            benchmark["report_path"] = str(benchmark_report_path)
+            comparison_csv_path = rebuild_comparison_csv(
+                output_dir=analysis_config.BENCHMARK_REPORT_DIR,
+                video_path=selected_video_path,
+            )
+            benchmark["comparison_csv_path"] = str(comparison_csv_path)
+            analysis_result.setdefault("artifacts", {})[
+                "benchmark_report_path"
+            ] = str(benchmark_report_path)
+            analysis_result["artifacts"]["benchmark_comparison_csv_path"] = (
+                str(comparison_csv_path)
+            )
 
         print(
             "Total analysis processing time: "
@@ -1417,11 +1711,10 @@ def run_analysis(
             flush=True,
         )
 
-        try:
-            import cv2 as cv
-            cv.destroyAllWindows()
-        except Exception:
-            pass
+        # Analysis is intentionally offline and never creates OpenCV windows.
+        # Calling destroyAllWindows() from the GUI worker thread can invoke
+        # native GUI-backend teardown unnecessarily, so no window cleanup is
+        # required here.
 
     return analysis_result
 
@@ -1506,18 +1799,29 @@ def process_ball_and_bounce_tracking_for_video(
     )
 
     tracker_state = create_ball_tracker_state()
-    bounce_state = create_bounce_state()
+    trajectory_bounce_state = create_trajectory_bounce_state(
+        config=build_trajectory_config(analysis_config),
+    )
 
     fps = video_info["fps"]
 
     frame_index = 0
     frames_analyzed = 0
+    inference_times_seconds = []
+    frame_pass_start = time.perf_counter()
+    frame_pass_seconds = 0.0
 
     last_progress_percent = 40
 
     ball_trail = []
 
-    heatmap_state = setup_heatmap_state_if_needed()
+    # Authoritative bounces are finalized after the frame pass, so do not draw
+    # an empty or legacy mini heatmap into the first-pass video.
+    heatmap_state = (
+        None
+        if TRAJECTORY_BOUNCE_AUTHORITATIVE
+        else setup_heatmap_state_if_needed()
+    )
 
     heatmap_overlay_output_size = get_heatmap_overlay_output_size(
         homography_result=homography_result,
@@ -1570,39 +1874,25 @@ def process_ball_and_bounce_tracking_for_video(
                 delta_time=1.0 / fps,
                 launch_region=launch_region,
             )
-
-            frames_analyzed += 1
-
-            # ------------------------------------------------------------
-            # Bounce detection
-            # ------------------------------------------------------------
-            #
-            # ball.py already ran tracker-owned temporal bounce logic during
-            # its per-frame update. bounce.py only adapts new points for output.
-
-            bounce_event = process_latest_active_position_for_bounce(
-                tracker_state=tracker_state,
-                ball_detection=ball_detection,
-                bounce_state=bounce_state,
+            inference_times_seconds.append(
+                ball_detection["inference_time_seconds"]
             )
 
-            if bounce_event is not None:
-                attach_bounce_table_coordinates(
-                    bounce_event=bounce_event,
-                    homography_result=homography_result,
-                )
-                attach_speed_estimate(
-                    bounce_event=bounce_event,
-                    positions=tracker_state["positions"],
-                    homography_result=homography_result,
-                )
-                print_bounce_event(bounce_event)
+            # The authoritative bounce detector observes the tracker output but
+            # keeps its own full, floating-point trajectory segments.
+            if TRAJECTORY_BOUNCE_ENABLED:
+                try:
+                    observe_trajectory_frame(
+                        state=trajectory_bounce_state,
+                        ball_detection=ball_detection,
+                    )
+                except Exception as error:
+                    raise RuntimeError(
+                        "Authoritative trajectory bounce detection failed "
+                        f"at frame {frame_index}: {error}"
+                    ) from error
 
-                add_bounce_to_heatmap_state_if_needed(
-                    heatmap_state=heatmap_state,
-                    bounce_event=bounce_event,
-                    homography_result=homography_result,
-                )
+            frames_analyzed += 1
 
             if total_frames > 0:
                 frame_fraction = min(1.0, frames_analyzed / total_frames)
@@ -1612,7 +1902,6 @@ def process_ball_and_bounce_tracking_for_video(
 
             should_report_progress = (
                 progress_percent != last_progress_percent
-                or bounce_event is not None
                 or (
                     total_frames <= 0
                     and BALL_ANALYSIS_PROGRESS_INTERVAL > 0
@@ -1628,7 +1917,7 @@ def process_ball_and_bounce_tracking_for_video(
                     message="Analyzing frames and detecting bounces.",
                     frames_analyzed=frames_analyzed,
                     total_frames=total_frames,
-                    bounce_count=bounce_state["total_bounces"],
+                    bounce_count=0,
                 )
                 last_progress_percent = progress_percent
 
@@ -1645,10 +1934,6 @@ def process_ball_and_bounce_tracking_for_video(
             # Use the tracker-owned trail so switches/resets match tracker.py.
             ball_trail = tracker_state["active_trail"]
 
-            annotation_bounce_events = normalize_bounce_events_for_annotation(
-                bounce_state["bounce_events"],
-            )
-
             write_annotated_frame_if_enabled(
                 annotated_video_writer=annotated_video_writer,
                 frame=frame,
@@ -1657,17 +1942,18 @@ def process_ball_and_bounce_tracking_for_video(
                 table_data=detected_table,
                 active_ball_data=active_ball_data,
                 ball_trail=ball_trail,
-                bounce_events=annotation_bounce_events,
+                bounce_events=[],
                 launch_region=launch_region,
                 ball_candidates=tracker_state["candidates"],
                 pending_challenger=tracker_state["display_challenger"],
                 pending_challenger_count=tracker_state[
                     "pending_challenger_count"
                 ],
-                bounce_armed=tracker_state["bounce_armed"],
-                bounce_cooldown=tracker_state["bounce_cooldown"],
+                bounce_armed=False,
+                bounce_cooldown=0,
                 heatmap_state=heatmap_state,
                 homography_output_size=heatmap_overlay_output_size,
+                draw_bounces_override=not TRAJECTORY_BOUNCE_AUTHORITATIVE,
             )
 
             print_annotation_progress_if_needed(frames_analyzed)
@@ -1691,21 +1977,83 @@ def process_ball_and_bounce_tracking_for_video(
             annotated_video_writer=annotated_video_writer,
             annotated_video_path=annotated_video_path,
         )
+        frame_pass_seconds = time.perf_counter() - frame_pass_start
 
     print_ball_tracking_summary(tracker_state)
-    print_bounce_summary(bounce_state)
 
     ball_tracking_summary = get_ball_tracking_summary(tracker_state)
-    bounce_tracking_summary = get_bounce_summary(bounce_state)
+    if not TRAJECTORY_BOUNCE_ENABLED:
+        raise RuntimeError(
+            "Full-trajectory bounce detection is disabled, but it is the "
+            "configured authoritative detector."
+        )
+
+    trajectory_diagnostics, bounce_events = (
+        finalize_authoritative_trajectory(
+            trajectory_bounce_state=trajectory_bounce_state,
+            homography_result=homography_result,
+            video_path=video_path,
+            model_version_tag=model_version_tag,
+        )
+    )
+    bounce_tracking_summary = {
+        "total_bounces": len(bounce_events),
+        "detector": "full_trajectory",
+        "detection_mode": "offline_full_track",
+    }
     bounce_tracking_summary.update(
-        summarize_bounce_speeds(bounce_state["bounce_events"])
+        summarize_bounce_speeds(bounce_events)
+    )
+
+    emit_analysis_progress(
+        progress_callback=progress_callback,
+        stage="trajectory_finalized",
+        percent=95,
+        message=(
+            "Full-trajectory bounces finalized; generating review artifacts."
+        ),
+        frames_analyzed=frames_analyzed,
+        total_frames=total_frames,
+        bounce_count=len(bounce_events),
     )
 
     heatmap_result = generate_heatmap_image_if_enabled(
         video_path=video_path,
-        bounce_events=bounce_state["bounce_events"],
+        bounce_events=bounce_events,
         homography_result=homography_result,
     )
+
+    if ANNOTATION_DRAW_BOUNCES and annotated_video_path is not None:
+        first_pass_annotated_video_path = annotated_video_path
+        try:
+            annotated_video_path = run_trajectory_annotation_worker(
+                source_video_path=first_pass_annotated_video_path,
+                trajectory_report_path=trajectory_diagnostics["report_path"],
+            )
+            trajectory_diagnostics["annotation_source_replaced"] = True
+            trajectory_diagnostics["annotated_video_path"] = str(
+                annotated_video_path
+            )
+            print()
+            print("===========================================", flush=True)
+            print(" Trajectory Annotation Complete", flush=True)
+            print("===========================================", flush=True)
+            print("Yellow B circles: full-trajectory detector", flush=True)
+            print(f"Saved video: {annotated_video_path}", flush=True)
+            print("===========================================", flush=True)
+            print()
+        except Exception as error:
+            # Annotation is an optional artifact. Never discard valid bounce
+            # results or prevent session JSON from being saved if native video
+            # encoding fails.
+            annotated_video_path = first_pass_annotated_video_path
+            trajectory_diagnostics["annotation_status"] = "failed"
+            trajectory_diagnostics["annotation_error"] = str(error)
+            print(
+                "Trajectory video annotation failed, but bounce results and "
+                f"JSON will still be saved: {error}",
+                flush=True,
+            )
 
     emit_analysis_progress(
         progress_callback=progress_callback,
@@ -1714,19 +2062,24 @@ def process_ball_and_bounce_tracking_for_video(
         message="Frame analysis and output generation complete.",
         frames_analyzed=frames_analyzed,
         total_frames=total_frames,
-        bounce_count=bounce_state["total_bounces"],
+        bounce_count=len(bounce_events),
     )
 
     ball_tracking_result = {
         "summary": ball_tracking_summary,
         "recent_positions": tracker_state["positions"],
         "active_trail": tracker_state["active_trail"],
+        "benchmark": summarize_frame_inference(
+            inference_times_seconds=inference_times_seconds,
+            frame_pass_seconds=frame_pass_seconds,
+        ),
     }
 
     bounce_tracking_result = {
         "summary": bounce_tracking_summary,
-        "bounce_events": bounce_state["bounce_events"],
+        "bounce_events": bounce_events,
         "heatmap": heatmap_result,
+        "trajectory_analysis": trajectory_diagnostics,
     }
 
     return (
@@ -1734,41 +2087,6 @@ def process_ball_and_bounce_tracking_for_video(
         bounce_tracking_result,
         annotated_video_path,
     )
-
-
-def process_latest_active_position_for_bounce(
-    tracker_state,
-    ball_detection,
-    bounce_state,
-):
-    """
-    Synchronize the bounce adapter with tracker-owned bounce state.
-
-    The original tracker performs bounce detection inside its per-frame update.
-    This function only exposes a newly registered point to existing output code.
-
-    Args:
-        tracker_state:
-            State dictionary from ball.py.
-
-        ball_detection:
-            Dictionary returned by process_ball_frame().
-
-        bounce_state:
-            State dictionary from bounce.py.
-
-    Returns:
-        bounce_event if a bounce was detected.
-        Otherwise None.
-    """
-
-    bounce_event = sync_bounce_state_from_tracker(
-        tracker_state=tracker_state,
-        bounce_state=bounce_state,
-        ball_detection=ball_detection,
-    )
-
-    return bounce_event
 
 
 def should_stop_ball_analysis(frames_analyzed, max_frames):

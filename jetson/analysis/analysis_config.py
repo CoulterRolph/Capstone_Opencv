@@ -33,6 +33,21 @@ ANALYSIS_DIR = PROJECT_ROOT / "analysis"
 RECORDINGS_DIR = PROJECT_ROOT / "recordings"
 MODELS_DIR = PROJECT_ROOT / "models"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
+QUANTIZATION_OUTPUTS_DIR = (
+    PROJECT_ROOT.parent
+    / "quantization_lab"
+    / "runtime_data"
+    / "outputs"
+)
+
+# The main app consumes models but never exports them. This lets newly-created
+# TensorRT engines appear in Analysis without copying them by hand.
+MODEL_SEARCH_ROOTS = (
+    MODELS_DIR,
+    QUANTIZATION_OUTPUTS_DIR,
+)
+
+BENCHMARK_REPORT_DIR = PROJECT_ROOT / "json_results" / "model_benchmarks"
 
 CAPTURE_RECORDINGS_DIR = PROJECT_ROOT / "capture" / "recordings"
 
@@ -304,6 +319,56 @@ BOUNCE_IGNORE_LAUNCH_REGION = True
 
 
 # ============================================================
+# Full-trajectory bounce detection
+# ============================================================
+
+# This is the authoritative detector for bounce totals, heatmaps, speeds, JSON,
+# GUI results, and video bounce markers. The tracker-owned legacy detector may
+# remain in ball.py for reference but its events are not consumed by Analysis.
+TRAJECTORY_BOUNCE_ENABLED = True
+TRAJECTORY_BOUNCE_AUTHORITATIVE = True
+
+# Retain more context than the legacy 9-frame detector and fit the incoming and
+# outgoing sides after future frames are available.
+TRAJECTORY_BOUNCE_MIN_SEGMENT_POINTS = 7
+TRAJECTORY_BOUNCE_LOOKBACK_POINTS = 5
+TRAJECTORY_BOUNCE_LOOKAHEAD_POINTS = 5
+TRAJECTORY_BOUNCE_MIN_SIDE_POINTS = 3
+
+# Local peak discovery uses ball-centre y values. The bbox bottom is reserved
+# for the final table-contact coordinate because box height can fluctuate.
+TRAJECTORY_BOUNCE_LOCAL_MAX_RADIUS = 2
+TRAJECTORY_BOUNCE_LOCAL_MAX_TOLERANCE_PX = 0.12
+
+# Initial deliberately sensitive settings for shallow bounces. These are
+# expected to be tuned from videos with known bounce counts.
+TRAJECTORY_BOUNCE_MIN_INCOMING_VY_PX_S = 6.0
+TRAJECTORY_BOUNCE_MIN_OUTGOING_VY_PX_S = 6.0
+TRAJECTORY_BOUNCE_MIN_SLOPE_CHANGE_PX_S = 14.0
+TRAJECTORY_BOUNCE_MIN_PROMINENCE_PX = 0.18
+TRAJECTORY_BOUNCE_MAX_FIT_RMSE_PX = 2.5
+
+TRAJECTORY_BOUNCE_MAX_FRAME_GAP = 3
+TRAJECTORY_BOUNCE_MIN_SEPARATION_FRAMES = 6
+TRAJECTORY_BOUNCE_IGNORE_LAUNCH_REGION = True
+
+# A shallow bounce can abruptly lose downward image velocity without actually
+# moving upward in image coordinates. Fit samples on each side of the contact,
+# excluding the contact itself, to detect that impact-shaped velocity break.
+TRAJECTORY_BOUNCE_IMPACT_BREAK_ENABLED = True
+TRAJECTORY_BOUNCE_IMPACT_SIDE_POINTS = 4
+TRAJECTORY_BOUNCE_IMPACT_MIN_INCOMING_VY_PX_S = 100.0
+TRAJECTORY_BOUNCE_IMPACT_MIN_VELOCITY_DROP_PX_S = 300.0
+TRAJECTORY_BOUNCE_IMPACT_MAX_OUTGOING_RATIO = 0.55
+TRAJECTORY_BOUNCE_IMPACT_MAX_SIDE_FIT_RMSE_PX = 8.0
+
+# Detailed evidence remains separate from the compact normal session results.
+TRAJECTORY_BOUNCE_REPORT_DIR = (
+    PROJECT_ROOT / "json_results" / "trajectory_bounce_reports"
+)
+
+
+# ============================================================
 # Heatmap settings
 # ============================================================
 
@@ -353,7 +418,7 @@ ANNOTATION_PRINT_PROGRESS = True
 ANNOTATION_PROGRESS_INTERVAL_FRAMES = 120
 
 ANNOTATED_VIDEO_DIR = PROJECT_ROOT / "review" / "annotated"
-ANNOTATED_VIDEO_PREFIX = "annotate_"
+ANNOTATED_VIDEO_PREFIX = "annotated_"
 ANNOTATED_VIDEO_EXTENSION = ".mkv"
 ANNOTATED_VIDEO_CODEC = "MJPG"
 
@@ -364,6 +429,10 @@ ANNOTATION_DRAW_ACTIVE_BALL = True
 ANNOTATION_DRAW_BALL_TRAIL = True
 ANNOTATION_DRAW_BOUNCES = True
 ANNOTATION_DRAW_LAUNCH_REGION = True
+
+# The full trajectory is known only after the first video pass. The final
+# authoritative video is produced in a lightweight second annotation pass.
+ANNOTATED_TRAJECTORY_SUFFIX = "_trajectory_bounces"
 
 
 # ============================================================

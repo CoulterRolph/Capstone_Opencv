@@ -201,7 +201,7 @@ quantized away before fitting.
 | `ANNOTATION_SAVE_VIDEO` | `True` | Writes an annotated MKV. |
 | `ANNOTATION_SHOW_PREVIEW` | `False` | Live OpenCV preview; intentionally disabled for offline workflow. |
 | `ANNOTATED_VIDEO_DIR` | `review/annotated` | Annotated output folder. |
-| `ANNOTATED_VIDEO_PREFIX` | `annotate_` | Filename prefix. |
+| `ANNOTATED_VIDEO_PREFIX` | `annotated_` | Filename prefix. |
 | `ANNOTATED_VIDEO_EXTENSION` | `.mkv` | Container extension. |
 | `ANNOTATED_VIDEO_CODEC` | `MJPG` | OpenCV writer codec. |
 | `ANNOTATION_DRAW_*` | mixed | Enables individual table, ball, trail, bounce, and debug overlays. |

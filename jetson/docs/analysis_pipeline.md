@@ -375,6 +375,18 @@ it does not include the controller's later session-JSON merge. Live and historic
 progress displays format the value as `Completed (23.45s)`. Older records without
 the optional field continue to show `Completed`.
 
+The Analysis page discovers concrete table and ball model files from both
+`jetson/models/` and `quantization_lab/runtime_data/outputs/`. Each selector
+accepts the original Ultralytics `.pt` model or an exported TensorRT `.engine`.
+The exact paths and formats are captured at start-up and recorded in
+`analysis_models`, so changing a dropdown during a run cannot change the
+in-progress experiment.
+
+Each successful run also records model-only ball inference latency (mean,
+median, and p95), model FPS, full frame-pass FPS, table/homography time, and
+total analysis time. Immutable JSON reports and a rebuilt per-video comparison
+CSV make repeated PyTorch, FP32, FP16, and INT8 runs directly comparable.
+
 ---
 
 ## Output Files
@@ -383,21 +395,31 @@ Current output locations:
 
 ```text
 review/annotated/
-    annotate_[recording_name]_[model tag].mkv
+    annotated_[table version]_[table runtime]_[ball version]_[ball runtime]_[date]_[video number].mkv
 
 review/heatmaps/
     heatmap_[recording_name].png
 
 capture/recording_json/
     [recording_name]_session.json
+
+json_results/model_benchmarks/
+    [recording_name]_[model tag]_[UTC timestamp].json
+    [recording_name]_comparison.csv
 ```
 
 The Review page uses session JSON to show bounce count, ball-detection rate,
 table status, and the referenced heatmap. It also resolves the annotated-video
 artifact and can open it directly in VLC.
 
-When both models use v2, the model tag is `v2`. If separate selectors are added
-later, a mixed selection uses a tag such as `table-v1_ball-v2`.
+The Analysis video dropdown uses `[date]_[six-digit video number]`, extracted
+from the capture timestamp. Annotated filenames place both model versions and
+runtimes before the same recording identity. PyTorch uses `PT`; TensorRT uses
+`FP32`, `FP16`, or `INT8`. For example:
+
+```text
+annotated_v3_INT8_v2_PT_20260722_142003.mkv
+```
 
 ---
 
@@ -417,6 +439,8 @@ Working or mostly connected:
 - Bounce detection
 - Annotated MKV output
 - Heatmap PNG output
+- Independent `.pt` / `.engine` table and ball selection
+- Persistent performance benchmark JSON and comparison CSV
 ```
 
 Still improving:
@@ -425,7 +449,7 @@ Still improving:
 - End-to-end verification of the session JSON merge
 - Consistent JSON identity and filename generation
 - Accepted/rejected bounce reporting
-- Quantitative accuracy validation
+- Ground-truth accuracy validation (current comparison is speed and output review)
 - Player-specific metrics
 - More detailed GUI result summaries
 ```

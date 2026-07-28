@@ -31,6 +31,11 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
+try:
+    from artifact_naming import build_recording_display_name
+except ModuleNotFoundError:
+    from analysis.artifact_naming import build_recording_display_name
+
 
 # ============================================================
 # Output path helpers
@@ -39,7 +44,7 @@ import numpy as np
 def build_annotated_video_path(
     original_video_path,
     output_dir,
-    prefix="annotate_",
+    prefix="annotated_",
     extension=".mkv",
     version_tag=None,
 ):
@@ -51,7 +56,8 @@ def build_annotated_video_path(
             sample_001.mkv
 
         output:
-            review/annotated/annotate_sample_001_v2.mkv
+            review/annotated/
+            annotated_v3_INT8_v2_PT_20260722_142003.mkv
     """
 
     original_video_path = Path(original_video_path)
@@ -59,17 +65,27 @@ def build_annotated_video_path(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    tag_suffix = ""
-
-    if version_tag is not None and str(version_tag).strip():
-        tag_suffix = f"_{str(version_tag).strip()}"
-
-    output_name = (
-        f"{prefix}{original_video_path.stem}{tag_suffix}{extension}"
-    )
+    recording_name = build_recording_display_name(original_video_path)
+    model_tag = str(version_tag or "").strip().strip("_")
+    if model_tag:
+        output_name = f"{prefix}{model_tag}_{recording_name}{extension}"
+    else:
+        output_name = f"{prefix}{recording_name}{extension}"
     output_path = output_dir / output_name
 
     return output_path
+
+
+def build_trajectory_comparison_video_path(
+    annotated_video_path,
+    suffix="_both_bounce_methods",
+):
+    """Build a separate output path so the legacy-only video is preserved."""
+
+    annotated_video_path = Path(annotated_video_path)
+    return annotated_video_path.with_name(
+        f"{annotated_video_path.stem}{suffix}{annotated_video_path.suffix}"
+    )
 
 
 # ============================================================
@@ -1046,6 +1062,237 @@ def draw_bounce_annotations(frame, bounce_events):
         )
 
     return frame
+
+
+def get_events_visible_at_frame(events, frame_index):
+    """Return events whose contact frame has occurred."""
+
+    visible_events = []
+    for event in events or []:
+        event_frame = get_bounce_frame_index(event)
+        if event_frame is None:
+            continue
+        if int(event_frame) <= int(frame_index):
+            visible_events.append(event)
+    return visible_events
+
+
+def draw_trajectory_bounce_annotations(frame, trajectory_events):
+    """Draw experimental events as magenta crosses labelled T1, T2, ..."""
+
+    trajectory_color = (255, 0, 255)
+
+    for index, bounce_data in enumerate(trajectory_events or [], start=1):
+        position = get_bounce_position(bounce_data)
+        if position is None:
+            continue
+
+        x, y = int(position[0]), int(position[1])
+        marker_radius = 9
+        cv.line(
+            frame,
+            (x - marker_radius, y - marker_radius),
+            (x + marker_radius, y + marker_radius),
+            trajectory_color,
+            2,
+        )
+        cv.line(
+            frame,
+            (x - marker_radius, y + marker_radius),
+            (x + marker_radius, y - marker_radius),
+            trajectory_color,
+            2,
+        )
+        draw_text(
+            frame,
+            f"T{index}",
+            (x + 10, min(frame.shape[0] - 8, y + 18)),
+            font_scale=0.42,
+            color=trajectory_color,
+            thickness=1,
+        )
+
+    return frame
+
+
+def draw_dual_bounce_legend(frame, trajectory_bounce_count):
+    """Explain both marker styles and show the trajectory running total."""
+
+    draw_text(
+        frame,
+        "Legacy: yellow B circle",
+        (20, 210),
+        font_scale=0.48,
+        color=(0, 255, 255),
+        thickness=1,
+    )
+    draw_text(
+        frame,
+        "Trajectory: magenta T cross",
+        (20, 232),
+        font_scale=0.48,
+        color=(255, 0, 255),
+        thickness=1,
+    )
+    draw_text(
+        frame,
+        f"Trajectory bounces: {int(trajectory_bounce_count)}",
+        (20, 254),
+        font_scale=0.48,
+        color=(255, 0, 255),
+        thickness=1,
+    )
+    return frame
+
+
+def draw_authoritative_trajectory_metrics(frame, bounce_events):
+    """Draw the finalized trajectory count over first-pass placeholders."""
+
+    bounce_events = [] if bounce_events is None else bounce_events
+    bounce_color = (0, 255, 255)
+    draw_text_box(
+        frame,
+        f"Bounces: {len(bounce_events)}",
+        (20, 90),
+        font_scale=0.6,
+        color=bounce_color,
+    )
+
+    if bounce_events:
+        last_position = get_bounce_position(bounce_events[-1])
+        if last_position is not None:
+            draw_text_box(
+                frame,
+                "Last Bounce: "
+                f"x={int(last_position[0])} y={int(last_position[1])}",
+                (20, 180),
+                font_scale=0.55,
+                color=bounce_color,
+            )
+
+    frame_height = frame.shape[0]
+    draw_text_box(
+        frame,
+        f"Bounces: {len(bounce_events)}",
+        (20, max(25, frame_height - 60)),
+        font_scale=0.5,
+        color=bounce_color,
+    )
+    draw_text_box(
+        frame,
+        "Detector: full trajectory",
+        (20, max(45, frame_height - 38)),
+        font_scale=0.5,
+        color=bounce_color,
+    )
+    return frame
+
+
+def add_trajectory_annotations_to_video(
+    source_video_path,
+    trajectory_events,
+    output_video_path=None,
+    codec="MJPG",
+    output_suffix="_both_bounce_methods",
+    progress_interval_frames=120,
+    authoritative=False,
+    frame_overlay_callback=None,
+):
+    """Overlay finalized trajectory events onto an existing annotated video."""
+
+    source_video_path = Path(source_video_path)
+    if output_video_path is None:
+        output_video_path = build_trajectory_comparison_video_path(
+            annotated_video_path=source_video_path,
+            suffix=output_suffix,
+        )
+    output_video_path = Path(output_video_path)
+
+    if source_video_path.resolve() == output_video_path.resolve():
+        raise ValueError(
+            "Trajectory comparison output must differ from its source video."
+        )
+    if not source_video_path.exists():
+        raise FileNotFoundError(
+            f"First-pass annotated video does not exist: {source_video_path}"
+        )
+
+    capture = cv.VideoCapture(str(source_video_path))
+    if not capture.isOpened():
+        raise RuntimeError(
+            f"Could not open first-pass annotated video: {source_video_path}"
+        )
+
+    writer = None
+    frames_written = 0
+    try:
+        fps = float(capture.get(cv.CAP_PROP_FPS))
+        frame_width = int(capture.get(cv.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(capture.get(cv.CAP_PROP_FRAME_HEIGHT))
+        writer = create_annotated_video_writer(
+            output_video_path=output_video_path,
+            frame_width=frame_width,
+            frame_height=frame_height,
+            fps=fps,
+            codec=codec,
+        )
+
+        while True:
+            success, frame = capture.read()
+            if not success:
+                break
+
+            visible_events = get_events_visible_at_frame(
+                trajectory_events,
+                frame_index=frames_written,
+            )
+            if authoritative:
+                draw_bounce_annotations(frame, visible_events)
+                draw_authoritative_trajectory_metrics(
+                    frame,
+                    visible_events,
+                )
+            else:
+                draw_trajectory_bounce_annotations(
+                    frame,
+                    visible_events,
+                )
+                draw_dual_bounce_legend(
+                    frame,
+                    trajectory_bounce_count=len(visible_events),
+                )
+
+            if frame_overlay_callback is not None:
+                callback_result = frame_overlay_callback(
+                    frame,
+                    frames_written,
+                    visible_events,
+                )
+                if callback_result is not None:
+                    frame = callback_result
+
+            writer.write(frame)
+            frames_written += 1
+
+            if (
+                progress_interval_frames
+                and frames_written % int(progress_interval_frames) == 0
+            ):
+                print(
+                    "Trajectory annotation frames: "
+                    f"{frames_written}",
+                    flush=True,
+                )
+    finally:
+        capture.release()
+        release_annotated_video_writer(writer)
+
+    if frames_written == 0:
+        raise RuntimeError(
+            "No frames were written to the trajectory annotated video."
+        )
+
+    return output_video_path
 
 
 def draw_bounce_tracker_metrics(

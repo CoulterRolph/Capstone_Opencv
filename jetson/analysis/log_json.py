@@ -177,6 +177,7 @@ def create_analysis_log(video_path, video_info):
             "homography_failed": False,
             "no_bounces_detected": True,
         },
+        "trajectory_bounce_analysis": None,
     }
 
     return analysis_log
@@ -469,7 +470,9 @@ def create_analysis_only_session(video_path, analysis_result=None):
             "no_bounces_detected": True,
         },
         "heatmap": None,
+        "trajectory_bounce_analysis": None,
         "analysis_models": {},
+        "benchmark": {},
         "artifacts": {"annotated_video_path": None},
     }
 
@@ -555,6 +558,11 @@ def merge_analysis_into_session(
             analysis_result["analysis_models"]
         )
 
+    if "benchmark" in analysis_result:
+        session_log["benchmark"] = make_json_safe(
+            analysis_result["benchmark"]
+        )
+
     if "camera_calibration" in analysis_result:
         session_log["camera_calibration"] = make_json_safe(
             analysis_result["camera_calibration"]
@@ -624,6 +632,19 @@ def merge_analysis_into_session(
         heatmap_result = bounce_tracking.get("heatmap")
         if heatmap_result is not None:
             session_log["heatmap"] = make_json_safe(heatmap_result)
+
+        # Keep detailed detector diagnostics separate from the compact,
+        # authoritative session_log["bounces"] list above.
+        trajectory_analysis = bounce_tracking.get(
+            "trajectory_analysis"
+        )
+        if trajectory_analysis is not None:
+            # Remove the obsolete comparison-mode block when an older session
+            # is reanalyzed with the authoritative trajectory detector.
+            session_log.pop("trajectory_bounce_comparison", None)
+            session_log["trajectory_bounce_analysis"] = make_json_safe(
+                trajectory_analysis
+            )
 
     # Update summary metrics
     update_summary_metrics(session_log)

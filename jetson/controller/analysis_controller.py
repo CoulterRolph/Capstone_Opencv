@@ -86,11 +86,16 @@ except ImportError:
     save_session_log = None
 
 from model_selection import (
+    ModelArtifactSelection,
     ModelSelection,
+    build_model_display_label,
+    discover_model_artifacts,
     list_available_model_versions,
+    resolve_model_selection,
 )
 
 import analysis_config
+from artifact_naming import build_recording_display_name
 
 
 # ============================================================
@@ -158,11 +163,43 @@ class AnalysisController:
 
         return recording_paths
 
+    @staticmethod
+    def get_recording_display_name(video_path):
+        """Return ``YYYYMMDD_HHMMSS`` for the Analysis video dropdown."""
+
+        return build_recording_display_name(video_path)
+
     def list_available_model_versions(self):
         """Return complete model-version folders in numeric order."""
 
         return list_available_model_versions(
             analysis_config.MODELS_DIR,
+        )
+
+    def list_available_models(self, model_kind):
+        """Return selectable ``.pt`` and ``.engine`` artifacts for one role."""
+
+        return discover_model_artifacts(
+            analysis_config.MODEL_SEARCH_ROOTS,
+            model_kind=model_kind,
+        )
+
+    @staticmethod
+    def get_model_display_label(model_path):
+        """Return the compact label shown by the Analysis dropdowns."""
+
+        return build_model_display_label(model_path)
+
+    def get_default_model_paths(self):
+        """Return the configured PyTorch pair used when no GUI choice exists."""
+
+        selection = ModelSelection(
+            table_version=analysis_config.TABLE_MODEL_VERSION,
+            ball_version=analysis_config.BALL_MODEL_VERSION,
+        )
+        return resolve_model_selection(
+            analysis_config.MODELS_DIR,
+            selection,
         )
 
     def get_default_model_version(self):
@@ -275,9 +312,18 @@ class AnalysisController:
 
         table_version = analysis_models.get("table_version")
         ball_version = analysis_models.get("ball_version")
+        table_format = analysis_models.get("table_format")
+        ball_format = analysis_models.get("ball_format")
+        table_precision = analysis_models.get("table_precision")
+        ball_precision = analysis_models.get("ball_precision")
         output_tag = analysis_models.get("output_tag")
 
-        if table_version and ball_version and table_version != ball_version:
+        if table_format or ball_format:
+            model_label = (
+                f"table={table_precision or table_format or '?'}, "
+                f"ball={ball_precision or ball_format or '?'}"
+            )
+        elif table_version and ball_version and table_version != ball_version:
             model_label = f"table={table_version}, ball={ball_version}"
         elif table_version or ball_version:
             model_label = str(table_version or ball_version)
@@ -297,6 +343,10 @@ class AnalysisController:
             "model_label": model_label,
             "table_model_version": table_version,
             "ball_model_version": ball_version,
+            "table_model_format": table_format,
+            "ball_model_format": ball_format,
+            "table_model_precision": table_precision,
+            "ball_model_precision": ball_precision,
             "analysis_processing_time_seconds": analysis_processing_time,
         }
 
@@ -305,6 +355,8 @@ class AnalysisController:
         video_path=None,
         table_model_version=None,
         ball_model_version=None,
+        table_model_path=None,
+        ball_model_path=None,
     ):
         """
         Start the analysis pipeline.
@@ -344,31 +396,35 @@ class AnalysisController:
 
             return False
 
-        if table_model_version is None:
-            table_model_version = analysis_config.TABLE_MODEL_VERSION
-
-        if ball_model_version is None:
-            ball_model_version = table_model_version
-
         try:
-            model_selection = ModelSelection(
-                table_version=table_model_version,
-                ball_version=ball_model_version,
-            )
-
-            available_versions = self.list_available_model_versions()
-
-            if model_selection.table_version not in available_versions:
-                raise ValueError(
-                    f"Table model version is unavailable: {model_selection.table_version}"
+            if table_model_path is not None or ball_model_path is not None:
+                if table_model_path is None or ball_model_path is None:
+                    raise ValueError(
+                        "Both table and ball model files must be selected."
+                    )
+                model_selection = ModelArtifactSelection(
+                    table_path=table_model_path,
+                    ball_path=ball_model_path,
+                )
+            else:
+                if table_model_version is None:
+                    table_model_version = analysis_config.TABLE_MODEL_VERSION
+                if ball_model_version is None:
+                    ball_model_version = table_model_version
+                version_selection = ModelSelection(
+                    table_version=table_model_version,
+                    ball_version=ball_model_version,
+                )
+                model_paths = resolve_model_selection(
+                    analysis_config.MODELS_DIR,
+                    version_selection,
+                )
+                model_selection = ModelArtifactSelection(
+                    table_path=model_paths["table"],
+                    ball_path=model_paths["ball"],
                 )
 
-            if model_selection.ball_version not in available_versions:
-                raise ValueError(
-                    f"Ball model version is unavailable: {model_selection.ball_version}"
-                )
-
-        except (TypeError, ValueError) as error:
+        except (FileNotFoundError, TypeError, ValueError) as error:
             self._send_message(
                 message_type="error",
                 message_text=f"Invalid model selection: {error}",
@@ -474,8 +530,8 @@ class AnalysisController:
                 message_text=(
                     f"{analysis_controller_config.STATUS_ANALYSIS_STARTED} "
                     f"Video: {video_path.name}; "
-                    f"table={model_selection.table_version}; "
-                    f"ball={model_selection.ball_version}"
+                    f"table={model_selection.table_path.name}; "
+                    f"ball={model_selection.ball_path.name}"
                 ),
             )
 
@@ -544,11 +600,11 @@ class AnalysisController:
                 "video_path": video_path,
             }
 
-            if "table_model_version" in function_signature.parameters:
-                call_arguments["table_model_version"] = model_selection.table_version
+            if "table_model_path" in function_signature.parameters:
+                call_arguments["table_model_path"] = model_selection.table_path
 
-            if "ball_model_version" in function_signature.parameters:
-                call_arguments["ball_model_version"] = model_selection.ball_version
+            if "ball_model_path" in function_signature.parameters:
+                call_arguments["ball_model_path"] = model_selection.ball_path
 
             if "progress_callback" in function_signature.parameters:
                 call_arguments["progress_callback"] = self._forward_progress_event
