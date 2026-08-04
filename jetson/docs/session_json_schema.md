@@ -402,8 +402,8 @@ This section makes the analysis reproducible. A future mixed selection can use:
 ```
 
 The path is `null` when annotation is disabled or the writer could not be
-created. Review enables its **Open Annotated Video** button when the file can be
-resolved locally, and opens the video using VLC.
+created. Review enables its embedded playback controls when the file can be
+resolved locally and loads it into a muted libVLC surface.
 
 The heatmap currently remains in its own top-level section rather than inside
 `artifacts`.

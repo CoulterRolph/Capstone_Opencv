@@ -436,6 +436,32 @@ def draw_frame_info(
     return frame
 
 
+def draw_model_info(
+    frame,
+    model_info_lines,
+    frame_info_enabled=True,
+):
+    """Draw the selected model identity below the top-left frame details."""
+
+    if not model_info_lines:
+        return frame
+
+    first_line_y = 150 if frame_info_enabled else 30
+    line_spacing = 30
+
+    for line_index, line in enumerate(model_info_lines):
+        text = str(line).strip()
+        if not text:
+            continue
+        draw_text(
+            frame,
+            text,
+            (20, first_line_y + (line_index * line_spacing)),
+        )
+
+    return frame
+
+
 # ============================================================
 # Table annotation
 # ============================================================
@@ -1385,7 +1411,9 @@ def annotate_frame(
     challenger_confirm_frames=3,
     bounce_armed=False,
     bounce_cooldown=0,
+    model_info_lines=None,
     draw_frame_info_enabled=True,
+    draw_model_info_enabled=True,
     draw_table=True,
     draw_ball=True,
     draw_active_ball=True,
@@ -1457,6 +1485,13 @@ def annotate_frame(
             fps,
             bounce_count=bounce_count,
             active_ball_found=active_ball_found,
+        )
+
+    if draw_model_info_enabled:
+        annotated_frame = draw_model_info(
+            annotated_frame,
+            model_info_lines=model_info_lines,
+            frame_info_enabled=draw_frame_info_enabled,
         )
 
     if draw_bounces:

@@ -159,7 +159,6 @@ Prepared but not fully surfaced:
 ```text
 - Player-specific metrics
 - Accepted/rejected bounce diagnostics
-- Embedded annotated-video playback in Review (external VLC opening is available)
 ```
 
 ---

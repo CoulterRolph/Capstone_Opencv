@@ -6,6 +6,7 @@ WORKDIR /workspace
 # System packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-tk \
+    vlc \
     && rm -rf /var/lib/apt/lists/*
 
 # Python packages
@@ -16,6 +17,7 @@ RUN python3 -m pip install --no-cache-dir --no-deps \
     pyserial
 
 RUN python3 -m pip install --no-cache-dir \
+    filelock==3.16.1 \
     pyyaml \
     requests \
     pillow \
@@ -24,7 +26,8 @@ RUN python3 -m pip install --no-cache-dir \
     tqdm \
     psutil \
     pandas \
-    seaborn
+    seaborn \
+    python-vlc
     
 # GStreamer packages for video capture and processing
 RUN apt-get update && apt-get install -y --no-install-recommends \

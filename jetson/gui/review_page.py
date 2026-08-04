@@ -8,7 +8,7 @@ Current scope:
 - Let the user select a training session from a dropdown.
 - Display key metrics from the session JSON.
 - Preview the heatmap if available.
-- Open the annotated video in VLC if available.
+- Play the annotated video in an embedded VLC surface if available.
 
 Future scope:
 - Generate reports.
@@ -59,6 +59,7 @@ for path_to_add in paths_to_add:
 import gui_config
 from review_controller import ReviewController
 from scrollable_frame import ScrollableFrame
+from vlc_player import EmbeddedVlcPlayer, VlcPlayerError
 
 
 # ============================================================
@@ -87,12 +88,21 @@ class ReviewPage(tk.Frame):
         self.selected_session_name = tk.StringVar()
         self.current_session_data = None
         self.current_annotated_video_path = None
+        self.video_seek_value = tk.DoubleVar(value=0.0)
 
         self.status_label = None
         self.session_dropdown = None
         self.refresh_sessions_button = None
         self.annotated_video_status_label = None
-        self.open_annotated_video_button = None
+        self.video_surface = None
+        self.video_player = None
+        self.video_player_error = None
+        self.video_play_pause_button = None
+        self.video_stop_button = None
+        self.video_seek_scale = None
+        self.video_time_label = None
+        self.video_poll_after_id = None
+        self.video_seek_is_dragging = False
         self.back_button = None
 
         # Stats display labels
@@ -381,7 +391,7 @@ class ReviewPage(tk.Frame):
 
     def _build_annotated_video_section(self, parent):
         """
-        Build the annotated-video availability and open controls.
+        Build the embedded annotated-video player and touch controls.
         """
 
         video_outer_frame = tk.Frame(
@@ -421,17 +431,65 @@ class ReviewPage(tk.Frame):
             pady=(0, 8),
         )
 
-        self.open_annotated_video_button = self._make_action_button(
-            parent=video_outer_frame,
-            text="Open Annotated Video",
-            color=gui_config.PRIMARY_BUTTON_COLOR,
-            command=self._on_open_annotated_video_clicked,
+        self.video_surface = tk.Frame(
+            video_outer_frame,
+            bg="black",
+            height=360,
+            highlightthickness=1,
+            highlightbackground=gui_config.BORDER_COLOR,
+        )
+        self.video_surface.pack(fill="x", pady=(0, 10))
+        self.video_surface.pack_propagate(False)
+
+        controls_frame = tk.Frame(
+            video_outer_frame,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+        )
+        controls_frame.pack(fill="x")
+
+        self.video_play_pause_button = self._make_video_control_button(
+            parent=controls_frame,
+            text="Play",
+            command=self._on_video_play_pause_clicked,
+        )
+        self.video_play_pause_button.pack(side="left", padx=(0, 8))
+
+        self.video_stop_button = self._make_video_control_button(
+            parent=controls_frame,
+            text="Stop",
+            command=self._on_video_stop_clicked,
+        )
+        self.video_stop_button.pack(side="left", padx=(0, 10))
+
+        self.video_seek_scale = ttk.Scale(
+            controls_frame,
+            from_=0.0,
+            to=1000.0,
+            variable=self.video_seek_value,
+            orient="horizontal",
+        )
+        self.video_seek_scale.pack(side="left", fill="x", expand=True)
+        self.video_seek_scale.bind(
+            "<ButtonPress-1>",
+            self._on_video_seek_started,
+        )
+        self.video_seek_scale.bind(
+            "<ButtonRelease-1>",
+            self._on_video_seek_finished,
         )
 
-        self.open_annotated_video_button.config(state="disabled")
-        self.open_annotated_video_button.pack(
-            anchor="center",
+        self.video_time_label = tk.Label(
+            controls_frame,
+            text="00:00 / 00:00",
+            width=15,
+            anchor="e",
+            font=gui_config.BODY_FONT,
+            bg=gui_config.DISPLAY_BACKGROUND_COLOR,
+            fg=gui_config.TEXT_ON_LIGHT_SECONDARY,
         )
+        self.video_time_label.pack(side="left", padx=(10, 0))
+
+        self._set_video_controls_enabled(False)
 
     def _build_heatmap_section(self, parent):
         """
@@ -588,6 +646,25 @@ class ReviewPage(tk.Frame):
             command=command,
         )
 
+    def _make_video_control_button(self, parent, text, command):
+        """Create a compact touch-friendly control for embedded playback."""
+
+        return tk.Button(
+            parent,
+            text=text,
+            width=8,
+            font=gui_config.BUTTON_FONT,
+            bg=gui_config.PRIMARY_BUTTON_COLOR,
+            fg="white",
+            activebackground=gui_config.PRIMARY_BUTTON_COLOR,
+            activeforeground="white",
+            disabledforeground="#d1d5db",
+            bd=0,
+            relief="flat",
+            cursor="hand2",
+            command=command,
+        )
+
     # --------------------------------------------------------
     # Session selection
     # --------------------------------------------------------
@@ -688,9 +765,10 @@ class ReviewPage(tk.Frame):
 
     def _display_annotated_video(self, session_data):
         """
-        Update the annotated-video button for the selected session.
+        Load the selected session's annotated video into embedded VLC.
         """
 
+        self._unload_video()
         annotated_video_path = (
             self.review_controller.get_annotated_video_path_from_session(
                 session_data
@@ -702,20 +780,44 @@ class ReviewPage(tk.Frame):
             self.annotated_video_status_label.config(
                 text="No annotated video is recorded for this session."
             )
-            self.open_annotated_video_button.config(state="disabled")
+            self._set_video_controls_enabled(False)
+            self._reset_video_progress()
             return
 
         if not annotated_video_path.is_file():
             self.annotated_video_status_label.config(
                 text="The annotated video file could not be found."
             )
-            self.open_annotated_video_button.config(state="disabled")
+            self._set_video_controls_enabled(False)
+            self._reset_video_progress()
+            return
+
+        if self.video_player is None:
+            player_message = (
+                self.video_player_error
+                or "Embedded VLC will initialize when Review is shown."
+            )
+            self.annotated_video_status_label.config(
+                text=f"{annotated_video_path.name} — {player_message}"
+            )
+            self._set_video_controls_enabled(False)
+            return
+
+        try:
+            self.video_player.load(annotated_video_path)
+        except (FileNotFoundError, VlcPlayerError) as error:
+            self.annotated_video_status_label.config(
+                text=f"Unable to load video: {error}"
+            )
+            self._set_video_controls_enabled(False)
+            self._reset_video_progress()
             return
 
         self.annotated_video_status_label.config(
             text=annotated_video_path.name
         )
-        self.open_annotated_video_button.config(state="normal")
+        self._set_video_controls_enabled(True)
+        self._reset_video_progress()
 
     def _display_session_stats(self, session_data):
         """
@@ -881,6 +983,7 @@ class ReviewPage(tk.Frame):
         Clear all displayed stats and preview.
         """
 
+        self._unload_video()
         for stat_box in self.stat_boxes:
             stat_box["value"].config(text="--")
 
@@ -897,7 +1000,8 @@ class ReviewPage(tk.Frame):
         self.annotated_video_status_label.config(
             text="No session selected."
         )
-        self.open_annotated_video_button.config(state="disabled")
+        self._set_video_controls_enabled(False)
+        self._reset_video_progress()
 
     # --------------------------------------------------------
     # Button callbacks
@@ -920,34 +1024,169 @@ class ReviewPage(tk.Frame):
         self._load_session_dropdown()
 
     def on_page_shown(self):
-        """Refresh central recording JSON storage whenever Review opens."""
+        """Initialize playback and refresh sessions whenever Review opens."""
 
+        self._initialize_video_player()
         self._load_session_dropdown()
+        self._schedule_video_poll()
 
-    def _on_open_annotated_video_clicked(self):
-        """
-        Open the selected session's annotated video in VLC.
-        """
+    def on_page_hidden(self):
+        """Stop native playback when the user leaves Review."""
 
+        self._stop_video_playback()
+        self._cancel_video_poll()
+
+    def shutdown(self):
+        """Release libVLC before Tk and the process are destroyed."""
+
+        self._cancel_video_poll()
+        if self.video_player is not None:
+            self.video_player.release()
+            self.video_player = None
+
+    def _initialize_video_player(self):
+        """Create libVLC only after the Review surface has an X11 window."""
+
+        if self.video_player is not None or self.video_player_error is not None:
+            return
         try:
-            opened_path = self.review_controller.open_annotated_video(
-                self.current_annotated_video_path
+            self.video_player = EmbeddedVlcPlayer(
+                video_surface=self.video_surface,
             )
-        except (FileNotFoundError, RuntimeError) as error:
+        except VlcPlayerError as error:
+            self.video_player_error = str(error)
+            self.annotated_video_status_label.config(
+                text=self.video_player_error
+            )
+            self._set_video_controls_enabled(False)
             self._set_status(
-                str(error),
+                self.video_player_error,
                 gui_config.STATUS_FAILED_COLOR,
-            )
-            messagebox.showerror(
-                "Unable to Open Annotated Video",
-                str(error),
             )
             return
 
+    def _on_video_play_pause_clicked(self):
+        """Toggle between play and pause for the loaded annotated video."""
+
+        if self.video_player is None:
+            return
+        try:
+            if self.video_player.is_playing():
+                self.video_player.pause()
+                self.video_play_pause_button.config(text="Play")
+            else:
+                if self.video_player.has_ended():
+                    self.video_player.set_position(0.0)
+                self.video_player.play()
+                self.video_play_pause_button.config(text="Pause")
+                self.video_stop_button.config(state="normal")
+        except VlcPlayerError as error:
+            self._show_video_error(error)
+
+    def _on_video_stop_clicked(self):
+        """Stop playback and return the timeline to the beginning."""
+
+        self._stop_video_playback()
+        self._reset_video_progress()
+
+    def _on_video_seek_started(self, _event):
+        self.video_seek_is_dragging = True
+
+    def _on_video_seek_finished(self, _event):
+        self.video_seek_is_dragging = False
+        if self.video_player is None:
+            return
+        try:
+            self.video_player.set_position(
+                self.video_seek_value.get() / 1000.0
+            )
+        except VlcPlayerError as error:
+            self._show_video_error(error)
+
+    def _stop_video_playback(self):
+        if self.video_player is not None:
+            self.video_player.stop()
+        if self.video_play_pause_button is not None:
+            self.video_play_pause_button.config(text="Play")
+
+    def _unload_video(self):
+        if self.video_player is not None:
+            self.video_player.unload()
+        if self.video_play_pause_button is not None:
+            self.video_play_pause_button.config(text="Play")
+
+    def _set_video_controls_enabled(self, enabled):
+        state = "normal" if enabled else "disabled"
+        if self.video_play_pause_button is not None:
+            self.video_play_pause_button.config(state=state)
+        if self.video_stop_button is not None:
+            self.video_stop_button.config(state=state)
+        if self.video_seek_scale is not None:
+            self.video_seek_scale.config(state=state)
+
+    def _reset_video_progress(self):
+        self.video_seek_value.set(0.0)
+        if self.video_time_label is not None:
+            self.video_time_label.config(text="00:00 / 00:00")
+        if self.video_play_pause_button is not None:
+            self.video_play_pause_button.config(text="Play")
+
+    def _schedule_video_poll(self):
+        if self.video_poll_after_id is None:
+            self.video_poll_after_id = self.after(
+                250,
+                self._poll_video_player,
+            )
+
+    def _cancel_video_poll(self):
+        if self.video_poll_after_id is not None:
+            try:
+                self.after_cancel(self.video_poll_after_id)
+            except tk.TclError:
+                pass
+            self.video_poll_after_id = None
+
+    def _poll_video_player(self):
+        self.video_poll_after_id = None
+        if self.video_player is not None:
+            try:
+                if not self.video_seek_is_dragging:
+                    self.video_seek_value.set(
+                        self.video_player.get_position() * 1000.0
+                    )
+                current_time = self.video_player.get_time_ms()
+                total_time = self.video_player.get_length_ms()
+                self.video_time_label.config(
+                    text=(
+                        f"{self._format_video_time(current_time)} / "
+                        f"{self._format_video_time(total_time)}"
+                    )
+                )
+                if self.video_player.has_ended():
+                    self.video_play_pause_button.config(text="Replay")
+                elif self.video_player.is_playing():
+                    self.video_play_pause_button.config(text="Pause")
+            except Exception as error:
+                self._show_video_error(error)
+        self._schedule_video_poll()
+
+    @staticmethod
+    def _format_video_time(milliseconds):
+        total_seconds = max(0, int(milliseconds) // 1000)
+        minutes, seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _show_video_error(self, error):
+        message = str(error)
+        self.annotated_video_status_label.config(text=message)
         self._set_status(
-            f"Opened in VLC: {opened_path.name}",
-            gui_config.STATUS_COMPLETE_COLOR,
+            message,
+            gui_config.STATUS_FAILED_COLOR,
         )
+        messagebox.showerror("Embedded Video Error", message)
 
     # --------------------------------------------------------
     # Status helpers

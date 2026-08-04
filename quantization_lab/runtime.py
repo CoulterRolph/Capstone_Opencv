@@ -46,9 +46,20 @@ def _jetson_release():
     return "not detected"
 
 
+def _filelock_async_ready():
+    """Return whether Ultralytics' required asynchronous lock is available."""
+
+    try:
+        from filelock import AsyncFileLock
+    except (ImportError, AttributeError):
+        return False
+    return AsyncFileLock is not None
+
+
 def inspect_runtime():
     packages = {
         "ultralytics": _package_version("ultralytics", "ultralytics"),
+        "filelock": _package_version("filelock", "filelock"),
         "torch": _package_version("torch", "torch"),
         "opencv": _package_version("opencv-python", "cv2"),
         "tensorrt": _package_version("tensorrt", "tensorrt"),
@@ -62,12 +73,13 @@ def inspect_runtime():
         packages[name] != "not installed"
         for name in (
             "ultralytics",
+            "filelock",
             "torch",
             "tensorrt",
             "onnx",
             "pyyaml",
         )
-    )
+    ) and _filelock_async_ready()
     benchmark_ready = all(
         packages[name] != "not installed"
         for name in ("ultralytics", "torch", "opencv")

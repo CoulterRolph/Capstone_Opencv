@@ -15,6 +15,10 @@ from quantization_lab.config import (
     DEFAULT_WARMUP_FRAMES,
     OUTPUT_ROOT,
 )
+from quantization_lab.display_naming import (
+    build_model_display_name,
+    build_video_display_name,
+)
 from quantization_lab.gui import theme
 from quantization_lab.gui.shared import (
     BackgroundTaskMixin,
@@ -39,10 +43,12 @@ class BenchmarkPage(ttk.Frame, BackgroundTaskMixin):
         super().__init__(parent, padding=16)
         self.runtime_report = runtime_report
         self.candidate_paths = []
+        self.baseline_model_path = None
+        self.video_file_path = None
         self.initialize_background_tasks()
 
-        self.baseline_model = tk.StringVar()
-        self.video_path = tk.StringVar()
+        self.baseline_model_label = tk.StringVar()
+        self.video_label = tk.StringVar()
         self.task = tk.StringVar(value="detect")
         self.image_size = tk.StringVar(value=str(DEFAULT_IMAGE_SIZE))
         self.confidence = tk.StringVar(value=str(DEFAULT_CONFIDENCE))
@@ -80,13 +86,14 @@ class BenchmarkPage(ttk.Frame, BackgroundTaskMixin):
         selection_card.grid(row=2, column=0, sticky="ew", pady=5)
         selection_card.columnconfigure(1, weight=1)
 
-        add_labeled_entry(
+        baseline_entry = add_labeled_entry(
             selection_card,
             0,
             "Baseline .pt model",
-            self.baseline_model,
+            self.baseline_model_label,
             width=60,
         )
+        baseline_entry.configure(state="readonly")
         ttk.Button(
             selection_card,
             text="Browse",
@@ -122,13 +129,14 @@ class BenchmarkPage(ttk.Frame, BackgroundTaskMixin):
             command=self._remove_candidate,
         ).pack(fill="x", pady=(5, 0))
 
-        add_labeled_entry(
+        video_entry = add_labeled_entry(
             selection_card,
             2,
             "Benchmark video",
-            self.video_path,
+            self.video_label,
             width=60,
         )
+        video_entry.configure(state="readonly")
         ttk.Button(
             selection_card,
             text="Browse",
@@ -285,7 +293,10 @@ class BenchmarkPage(ttk.Frame, BackgroundTaskMixin):
             filetypes=(("PyTorch models", "*.pt"), ("All files", "*")),
         )
         if path:
-            self.baseline_model.set(path)
+            self.baseline_model_path = Path(path).resolve()
+            self.baseline_model_label.set(
+                build_model_display_name(self.baseline_model_path)
+            )
             lowered = Path(path).stem.lower()
             self.task.set(
                 "pose"
@@ -304,9 +315,13 @@ class BenchmarkPage(ttk.Frame, BackgroundTaskMixin):
                 ("All files", "*"),
             ),
         )
-        if path and path not in self.candidate_paths:
-            self.candidate_paths.append(path)
-            self.candidate_list.insert("end", path)
+        if path:
+            candidate_path = Path(path).resolve()
+        else:
+            candidate_path = None
+        if candidate_path and candidate_path not in self.candidate_paths:
+            self.candidate_paths.append(candidate_path)
+            self._refresh_candidate_list()
             self._update_run_state()
 
     def add_artifact(self, export_result):
@@ -321,9 +336,27 @@ class BenchmarkPage(ttk.Frame, BackgroundTaskMixin):
         if not selection:
             return
         index = selection[0]
-        self.candidate_list.delete(index)
         self.candidate_paths.pop(index)
+        self._refresh_candidate_list()
         self._update_run_state()
+
+    def _refresh_candidate_list(self):
+        """Show compact, unique labels while retaining paths by list index."""
+
+        self.candidate_list.delete(0, "end")
+        duplicate_counts = {}
+        for candidate_path in self.candidate_paths:
+            base_label = build_model_display_name(candidate_path)
+            duplicate_counts[base_label] = (
+                duplicate_counts.get(base_label, 0) + 1
+            )
+            duplicate_number = duplicate_counts[base_label]
+            label = (
+                base_label
+                if duplicate_number == 1
+                else f"{base_label} ({duplicate_number})"
+            )
+            self.candidate_list.insert("end", label)
 
     def _browse_video(self):
         path = filedialog.askopenfilename(
@@ -335,26 +368,27 @@ class BenchmarkPage(ttk.Frame, BackgroundTaskMixin):
             ),
         )
         if path:
-            self.video_path.set(path)
+            self.video_file_path = Path(path).resolve()
+            self.video_label.set(
+                build_video_display_name(self.video_file_path)
+            )
             self._update_run_state()
 
     def _update_run_state(self):
         ready = (
             self.runtime_report.benchmark_ready
-            and bool(self.baseline_model.get())
+            and self.baseline_model_path is not None
             and bool(self.candidate_paths)
-            and bool(self.video_path.get())
+            and self.video_file_path is not None
             and not self._task_running
         )
         self.run_button.configure(state="normal" if ready else "disabled")
 
     def _build_request(self):
         return BenchmarkRequest(
-            baseline_model=Path(self.baseline_model.get()),
-            candidate_models=tuple(
-                Path(path) for path in self.candidate_paths
-            ),
-            video_path=Path(self.video_path.get()),
+            baseline_model=self.baseline_model_path,
+            candidate_models=tuple(self.candidate_paths),
+            video_path=self.video_file_path,
             output_root=BENCHMARK_ROOT,
             image_size=int(self.image_size.get()),
             confidence=float(self.confidence.get()),

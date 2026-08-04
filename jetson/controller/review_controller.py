@@ -20,8 +20,6 @@ Important:
 # ============================================================
 
 import json
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -78,7 +76,6 @@ class ReviewController:
         Create the review controller.
         """
 
-        self.last_opened_file_path = None
         self.last_loaded_session = None
 
     def list_available_sessions(self):
@@ -278,63 +275,6 @@ class ReviewController:
 
         # This also provides a useful expected path for a missing-file error.
         return review_controller_config.ANNOTATED_DIR / saved_path.name
-
-    def open_annotated_video(self, annotated_video_path):
-        """
-        Launch an existing annotated video using VLC only.
-
-        Raises:
-            FileNotFoundError: If the annotated video does not exist.
-            RuntimeError: If VLC is unavailable or cannot be launched.
-        """
-
-        if annotated_video_path is None:
-            raise FileNotFoundError(
-                "No annotated video is recorded for this session."
-            )
-
-        annotated_video_path = Path(annotated_video_path)
-
-        if not annotated_video_path.is_file():
-            raise FileNotFoundError(
-                f"Annotated video does not exist: {annotated_video_path}"
-            )
-
-        vlc_path = self._find_vlc_executable()
-        if vlc_path is None:
-            configured_paths = ", ".join(
-                str(path)
-                for path in review_controller_config.VLC_EXECUTABLE_PATHS
-            )
-            raise RuntimeError(
-                "VLC could not be found. Checked PATH and: "
-                f"{configured_paths}"
-            )
-
-        try:
-            subprocess.Popen(
-                [vlc_path, str(annotated_video_path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except OSError as error:
-            raise RuntimeError(f"VLC could not be opened: {error}") from error
-
-        self.last_opened_file_path = annotated_video_path
-        return annotated_video_path
-
-    def _find_vlc_executable(self):
-        """
-        Find VLC even when the GUI process has a restricted PATH.
-        """
-
-        for configured_path in review_controller_config.VLC_EXECUTABLE_PATHS:
-            configured_path = Path(configured_path)
-            if configured_path.is_file():
-                return str(configured_path)
-
-        return shutil.which("vlc")
-
 
 # ============================================================
 # Direct tests

@@ -138,7 +138,8 @@ def run_export(request, progress=None, retain_native_resources=False):
     if not runtime.export_ready:
         raise RuntimeError(
             "Export runtime is incomplete. Ultralytics, PyTorch, TensorRT, "
-            "and PyYAML must be installed inside the Jetson container."
+            "PyYAML, and a compatible filelock must be installed inside the "
+            "Jetson container."
         )
 
     precision = request.normalized_precision()

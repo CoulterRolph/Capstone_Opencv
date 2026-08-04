@@ -480,8 +480,8 @@ Current known limitations:
   names are stored inside `session.session_name`.
 * Session JSON is the current structured record, but path portability and schema
   migration still need explicit policies.
-* Review displays JSON-backed metrics and a heatmap and can launch the
-  annotated video through VLC when it is installed.
+* Review displays JSON-backed metrics and a heatmap and plays the annotated
+  video in a muted embedded VLC surface with play, pause, stop, and seek.
 * Analysis accuracy depends on:
 
   * table corner detection quality

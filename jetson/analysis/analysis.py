@@ -85,6 +85,11 @@ ANNOTATED_VIDEO_EXTENSION = analysis_config.ANNOTATED_VIDEO_EXTENSION
 ANNOTATED_VIDEO_CODEC = analysis_config.ANNOTATED_VIDEO_CODEC
 
 ANNOTATION_DRAW_FRAME_INFO = analysis_config.ANNOTATION_DRAW_FRAME_INFO
+ANNOTATION_DRAW_MODEL_INFO = getattr(
+    analysis_config,
+    "ANNOTATION_DRAW_MODEL_INFO",
+    True,
+)
 ANNOTATION_DRAW_TABLE = analysis_config.ANNOTATION_DRAW_TABLE
 ANNOTATION_DRAW_BALL = analysis_config.ANNOTATION_DRAW_BALL
 ANNOTATION_DRAW_ACTIVE_BALL = analysis_config.ANNOTATION_DRAW_ACTIVE_BALL
@@ -281,6 +286,10 @@ from benchmark_report import (
     rebuild_comparison_csv,
     save_analysis_benchmark,
     summarize_frame_inference,
+)
+from native_lifecycle import (
+    model_formats_require_retained_capture,
+    release_or_retain_video_capture,
 )
 
 
@@ -508,6 +517,7 @@ def write_annotated_frame_if_enabled(
     pending_challenger_count=0,
     bounce_armed=False,
     bounce_cooldown=0,
+    model_info_lines=None,
     heatmap_state=None,
     homography_output_size=None,
     draw_bounces_override=None,
@@ -546,7 +556,9 @@ def write_annotated_frame_if_enabled(
         challenger_confirm_frames=BALL_SWITCH_CONFIRM_FRAMES,
         bounce_armed=bounce_armed,
         bounce_cooldown=bounce_cooldown,
+        model_info_lines=model_info_lines,
         draw_frame_info_enabled=ANNOTATION_DRAW_FRAME_INFO,
+        draw_model_info_enabled=ANNOTATION_DRAW_MODEL_INFO,
         draw_table=ANNOTATION_DRAW_TABLE,
         draw_ball=ANNOTATION_DRAW_BALL,
         draw_active_ball=ANNOTATION_DRAW_ACTIVE_BALL,
@@ -1607,6 +1619,7 @@ def run_analysis(
             max_frames=BALL_ANALYSIS_MAX_FRAMES,
             ball_model_path=model_selection.ball_path,
             model_version_tag=model_selection.annotation_tag,
+            model_info_lines=model_selection.annotation_info_lines,
             progress_callback=progress_callback,
         )
 
@@ -1669,9 +1682,23 @@ def run_analysis(
         print()
 
     finally:
-        if video_capture is not None:
-            video_capture.release()
+        uses_pytorch_model = model_formats_require_retained_capture(
+            table_format=model_selection.table_format,
+            ball_format=model_selection.ball_format,
+        )
+        capture_cleanup_status = release_or_retain_video_capture(
+            video_capture,
+            retain_until_process_exit=uses_pytorch_model,
+        )
+        video_capture = None
+
+        if capture_cleanup_status == "released":
             print("Video released safely.", flush=True)
+        elif capture_cleanup_status == "retained":
+            print(
+                "Video capture retained until process exit for safe PT cleanup.",
+                flush=True,
+            )
 
         analysis_elapsed_time = time.perf_counter() - analysis_start_time
         analysis_processing_time_seconds = round(analysis_elapsed_time, 2)
@@ -1732,6 +1759,7 @@ def process_ball_and_bounce_tracking_for_video(
     max_frames=None,
     ball_model_path=None,
     model_version_tag=None,
+    model_info_lines=None,
     progress_callback=None,
 ):
     """
@@ -1951,6 +1979,7 @@ def process_ball_and_bounce_tracking_for_video(
                 ],
                 bounce_armed=False,
                 bounce_cooldown=0,
+                model_info_lines=model_info_lines,
                 heatmap_state=heatmap_state,
                 homography_output_size=heatmap_overlay_output_size,
                 draw_bounces_override=not TRAJECTORY_BOUNCE_AUTHORITATIVE,

@@ -204,6 +204,7 @@ quantized away before fitting.
 | `ANNOTATED_VIDEO_PREFIX` | `annotated_` | Filename prefix. |
 | `ANNOTATED_VIDEO_EXTENSION` | `.mkv` | Container extension. |
 | `ANNOTATED_VIDEO_CODEC` | `MJPG` | OpenCV writer codec. |
+| `ANNOTATION_DRAW_MODEL_INFO` | `True` | Draws the selected model version and runtime in the top-left. |
 | `ANNOTATION_DRAW_*` | mixed | Enables individual table, ball, trail, bounce, and debug overlays. |
 
 Annotated filenames also include the selected model tag, such as `_v2`.

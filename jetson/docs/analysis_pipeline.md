@@ -410,7 +410,7 @@ json_results/model_benchmarks/
 
 The Review page uses session JSON to show bounce count, ball-detection rate,
 table status, and the referenced heatmap. It also resolves the annotated-video
-artifact and can open it directly in VLC.
+artifact and plays it in the page's embedded VLC surface.
 
 The Analysis video dropdown uses `[date]_[six-digit video number]`, extracted
 from the capture timestamp. Annotated filenames place both model versions and

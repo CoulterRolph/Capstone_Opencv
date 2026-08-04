@@ -17,12 +17,13 @@ Review displays the information.
 
 | File or folder | Responsibility |
 | --- | --- |
-| `gui/review_page.py` | Select a session, display metrics and its heatmap, and open its annotated video. |
-| `controller/review_controller.py` | Find, load, and interpret session JSON files and launch annotated videos in VLC. |
+| `gui/review_page.py` | Select a session, display metrics and its heatmap, and control embedded video playback. |
+| `gui/vlc_player.py` | Wrap `python-vlc` and bind libVLC video output to the Tkinter video frame. |
+| `controller/review_controller.py` | Find, load, and interpret session JSON files and resolve artifact paths. |
 | `gui/scrollable_frame.py` | Keep Review usable on the touchscreen. |
 | `capture/recording_json/` | Store all `_session.json` records centrally. |
 | `review/heatmaps/` | Store heatmap images referenced by session JSON. |
-| `review/annotated/` | Store annotated videos opened from Review using VLC. |
+| `review/annotated/` | Store annotated videos played inside Review using VLC. |
 | `gui/review_page_old.py` | Preserved pre-session Review implementation. |
 
 ---
@@ -47,14 +48,14 @@ flowchart TD
     Exists -->|Yes| Preview[Display heatmap]
     Exists -->|No| Missing[Show no heatmap available]
     VideoPath --> VideoExists{Video exists?}
-    VideoExists -->|Yes| OpenButton[Enable Open Annotated Video]
-    VideoExists -->|No| VideoMissing[Disable button and show unavailable]
-    OpenButton --> VLC[Open video in VLC]
+    VideoExists -->|Yes| LoadPlayer[Load embedded muted VLC player]
+    VideoExists -->|No| VideoMissing[Disable controls and show unavailable]
+    LoadPlayer --> Controls[Play, pause, stop, and seek]
 
     Boxes --> User[User reviews saved results]
     Preview --> User
     Missing --> User
-    VLC --> User
+    Controls --> User
     VideoMissing --> User
 ```
 
@@ -124,8 +125,9 @@ Working in code:
 - JSON loading
 - Two rows of bounce, detection, table, estimated-speed, and shot metrics
 - Heatmap preview
-- VLC-only annotated-video opening
-- Absolute VLC-path discovery for GUI/container environments with a restricted `PATH`
+- Muted embedded annotated-video playback
+- Play, pause, stop, replay, seek, and elapsed/duration controls
+- Native player cleanup when Review is hidden or the application shuts down
 - Scrollable touchscreen layout
 
 Not yet implemented or verified:
@@ -134,6 +136,10 @@ Not yet implemented or verified:
 - More detailed ball and bounce diagnostics
 - Session-to-session comparison
 - Exportable reports
+
+Embedded playback requires both the system `vlc` package (libVLC and codecs)
+and the Python `python-vlc` binding. The Docker image installs both. Tkinter and
+libVLC share the same forwarded X11 display; audio is intentionally disabled.
 
 The main current risk is session identity. If Training uses a custom name for
 the JSON but Analysis searches for a JSON based on the MKV stem, the analysis

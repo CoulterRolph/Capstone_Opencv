@@ -63,6 +63,10 @@ class ModelArtifactSelectionTests(unittest.TestCase):
                 selection.annotation_tag,
                 "v3_PT_v4_INT8",
             )
+            self.assertEqual(
+                selection.annotation_info_lines,
+                ("Table: V3 PT", "Ball: V4 INT8"),
+            )
             self.assertIn("table_pose_03_small-pt", selection.output_tag)
             self.assertIn(
                 "ball_detect-20260727T161022Z_int8-engine",
@@ -75,6 +79,43 @@ class ModelArtifactSelectionTests(unittest.TestCase):
             self.assertEqual(
                 build_model_display_label(ball),
                 "v4 Medium | INT8 | ENGINE",
+            )
+
+    def test_matching_models_collapse_to_one_annotation_line(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+
+            for precision, expected_runtime in (
+                ("fp32", "FP32"),
+                ("fp16", "FP16"),
+                ("int8", "INT8"),
+            ):
+                export = root / "models" / "v2" / precision
+                export.mkdir(parents=True)
+                table = export / "table_pose.engine"
+                ball = export / "ball_detect.engine"
+                table.touch()
+                ball.touch()
+                (export / "manifest.json").write_text(
+                    json.dumps({"precision": precision}),
+                    encoding="utf-8",
+                )
+
+                selection = ModelArtifactSelection(table, ball)
+                self.assertEqual(
+                    selection.annotation_info_lines,
+                    (f"Models: V2 {expected_runtime}",),
+                )
+
+            pytorch_root = root / "models" / "v2"
+            table_pt = pytorch_root / "table_pose_02_small.pt"
+            ball_pt = pytorch_root / "ball_detect_02_small.pt"
+            table_pt.touch()
+            ball_pt.touch()
+            pytorch_selection = ModelArtifactSelection(table_pt, ball_pt)
+            self.assertEqual(
+                pytorch_selection.annotation_info_lines,
+                ("Models: V2 PT",),
             )
 
     def test_benchmark_reports_accumulate_in_comparison_csv(self):

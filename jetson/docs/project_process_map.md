@@ -61,7 +61,7 @@ flowchart LR
 
     Review --> Metrics[Bounces, detection rate, and table status]
     Review --> Visual[Heatmap preview]
-    Review --> Playback[Open annotated video in VLC]
+    Review --> Playback[Play annotated video in embedded VLC]
 ```
 
 The main information lifecycle is:

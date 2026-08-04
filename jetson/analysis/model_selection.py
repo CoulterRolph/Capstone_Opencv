@@ -123,6 +123,27 @@ class ModelArtifactSelection:
             )
         )
 
+    @property
+    def annotation_info_lines(self):
+        """Human-readable model identity lines for annotated video frames."""
+
+        table_identity = (
+            build_model_version_slug(self.table_path).upper(),
+            build_model_runtime_slug(self.table_path),
+        )
+        ball_identity = (
+            build_model_version_slug(self.ball_path).upper(),
+            build_model_runtime_slug(self.ball_path),
+        )
+
+        if table_identity == ball_identity:
+            return (f"Models: {' '.join(table_identity)}",)
+
+        return (
+            f"Table: {' '.join(table_identity)}",
+            f"Ball: {' '.join(ball_identity)}",
+        )
+
     def to_dict(self):
         return {
             "table_model_path": str(self.table_path),
